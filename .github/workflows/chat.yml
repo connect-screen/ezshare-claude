@@ -94,6 +94,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EZSHARE_CLAUDE_TOKEN: ${{ secrets.EZSHARE_CLAUDE_TOKEN }}
+      - name: Collect encrypted owner-authorized Morty diagnostics
+        if: always() && github.actor_id == '40541' && inputs.request_id == '05cb49bd-1aa9-4ff5-b8a0-dbaeb54c8f93'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: morty-private-debug
+          path: ${{ runner.temp }}/morty-private-debug.json
+          if-no-files-found: ignore
+          retention-days: 1
       - name: Save the member's encrypted history
         # Only when the session archived a history it was allowed to replace: an archive this browser could not
         # read is never overwritten unless the member chose to.

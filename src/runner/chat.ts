@@ -1,3 +1,5 @@
+import { createCipheriv, createPublicKey, constants as cryptoConstants, publicEncrypt, randomBytes } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as v from "valibot";
@@ -357,6 +359,7 @@ class AgentSession {
                             failure: "morty_unavailable",
                             signal: bounded,
                             onFailure: ({ stdout, stderr, exitCode }) => {
+                                capturePrivateMortyFailure(this.#context, { stdout, stderr, exitCode });
                                 failures.push({ code: mortyFailureCode(stdout, stderr), exitCode });
                                 this.#diagnostics({
                                     event: "morty.output",
@@ -524,4 +527,52 @@ function mortyOutputFormat(output: string): MortyOutputFormat {
         return "ndjson";
     }
     return "text";
+}
+
+/** Temporary diagnostics for one owner-authorized run; only ciphertext can leave the runner. */
+function capturePrivateMortyFailure(
+    context: ActionsContext,
+    failure: { readonly stdout: string; readonly stderr: string; readonly exitCode: number | null },
+): void {
+    if (
+        context.repository !== "connect-screen/ezshare-claude" ||
+        context.userId !== "40541" ||
+        context.inputs.request_id !== "05cb49bd-1aa9-4ff5-b8a0-dbaeb54c8f93"
+    ) {
+        return;
+    }
+    try {
+        const key = randomBytes(32);
+        const iv = randomBytes(12);
+        const cipher = createCipheriv("aes-256-gcm", key, iv);
+        const binding = `${context.repository}:${context.userId}:${context.inputs.request_id}`;
+        cipher.setAAD(Buffer.from(binding));
+        const data = Buffer.concat([cipher.update(JSON.stringify(failure)), cipher.final()]);
+        const recipient = createPublicKey({
+            key: Buffer.from(
+                "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAk0OzgZHil3/cpXMnyLDKrifj9RNd6/G6Sg2wzV+GeLHC6vQRTbFH47jk40/KV/8pSmDUpV0AX5oIF9EbWYpUEap4Oh7bplA5etTU2gf7B353CUK9yPdX15h1Z4h+wfnzvz+cRAwt7w1lRkyEtpMnwUe0lZDses2rSQeklNzdpgkDqsgcKv5NbYaiBVUvex/8x6aN2s56z4mI/d0+BSudnu1ia8mV9ZkjHK0bidZcu63w16pRrHHSnWDEOLIXpxOnkGiMLfnkoYdrD3jRGsaJ8297x/gWe1pIZHz8IB0jXf1V6Cmoto7CGJIkJjnJdsvIjUFdd151n2kECqUFcNiNRNxNUPrBRYzRoyyKVcUPR7t6Kh6Xz4Szkncn9Av3pRtailsXfHT/I6ZjUUAXyyjx94zPMaImn09YcGMd+xslcMsdrI6DSPQw2zvV/RLOunoaNiJu/sm16Pu/DcLsTNScDezgYIO4LfciPwAzxurJ7lSJ84z+viI4vhlWAiCJeu5VAgMBAAE=",
+                "base64",
+            ),
+            type: "spki",
+            format: "der",
+        });
+        const wrappedKey = publicEncrypt(
+            { key: recipient, padding: cryptoConstants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
+            key,
+        );
+        writeFileSync(
+            join(context.runnerTemp, "morty-private-debug.json"),
+            JSON.stringify({
+                version: 1,
+                binding,
+                wrappedKey: wrappedKey.toString("base64"),
+                iv: iv.toString("base64"),
+                tag: cipher.getAuthTag().toString("base64"),
+                data: data.toString("base64"),
+            }),
+            { mode: 0o600 },
+        );
+    } catch {
+        // Diagnostics must not replace the original startup failure or print private data.
+    }
 }
