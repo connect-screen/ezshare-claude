@@ -30,7 +30,15 @@ export async function startFakeActions(
     options: {
         readonly repository: string;
         readonly clock: TestClock;
-        readonly mortyFailure?: "provider" | "npm" | "npm-transient" | "npm-unavailable";
+        readonly mortyFailure?:
+            | "provider"
+            | "npm"
+            | "npm-transient"
+            | "npm-unavailable"
+            | "computer-conflict"
+            | "node-module"
+            | "unknown"
+            | "npm-text";
         readonly mortyHandoff?: "legacy" | "encrypted" | "conflicting";
         readonly sharedToken: () => string | null;
     },
