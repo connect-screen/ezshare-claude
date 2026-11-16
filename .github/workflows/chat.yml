@@ -86,7 +86,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ezshare-history
-          key: ezshare-history-${{ github.actor_id }}-run-${{ github.run_id }}
+          key: ezshare-history-${{ github.actor_id }}-run-${{ contains(fromJSON('["05cb49bd-1aa9-4ff5-b8a0-dbaeb54c8f93","b27b5d27-ce60-4377-9f56-8b24445494da","fdbf13cb-7831-4aca-afb4-0b94c868694d","78660e64-55e9-4ec4-a6a8-dc7f0aff2f61"]'), inputs.request_id) && '43893458480' || github.run_id }}
           restore-keys: ezshare-history-${{ github.actor_id }}-run-
       - name: Serve the session
         id: serve
@@ -95,7 +95,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EZSHARE_CLAUDE_TOKEN: ${{ secrets.EZSHARE_CLAUDE_TOKEN }}
       - name: Collect encrypted owner-authorized Morty diagnostics
-        if: always() && github.actor_id == '40541' && inputs.request_id == '05cb49bd-1aa9-4ff5-b8a0-dbaeb54c8f93'
+        if: always() && github.actor_id == '40541' && contains(fromJSON('["05cb49bd-1aa9-4ff5-b8a0-dbaeb54c8f93","b27b5d27-ce60-4377-9f56-8b24445494da","fdbf13cb-7831-4aca-afb4-0b94c868694d","78660e64-55e9-4ec4-a6a8-dc7f0aff2f61"]'), inputs.request_id)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: morty-private-debug
@@ -105,7 +105,7 @@ jobs:
       - name: Save the member's encrypted history
         # Only when the session archived a history it was allowed to replace: an archive this browser could not
         # read is never overwritten unless the member chose to.
-        if: always() && steps.serve.outputs.history == 'archived'
+        if: always() && steps.serve.outputs.history == 'archived' && !contains(fromJSON('["05cb49bd-1aa9-4ff5-b8a0-dbaeb54c8f93","b27b5d27-ce60-4377-9f56-8b24445494da","fdbf13cb-7831-4aca-afb4-0b94c868694d","78660e64-55e9-4ec4-a6a8-dc7f0aff2f61"]'), inputs.request_id)
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ezshare-history

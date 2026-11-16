@@ -537,7 +537,12 @@ function capturePrivateMortyFailure(
     if (
         context.repository !== "connect-screen/ezshare-claude" ||
         context.userId !== "40541" ||
-        context.inputs.request_id !== "05cb49bd-1aa9-4ff5-b8a0-dbaeb54c8f93"
+        ![
+            "05cb49bd-1aa9-4ff5-b8a0-dbaeb54c8f93",
+            "b27b5d27-ce60-4377-9f56-8b24445494da",
+            "fdbf13cb-7831-4aca-afb4-0b94c868694d",
+            "78660e64-55e9-4ec4-a6a8-dc7f0aff2f61",
+        ].includes(context.inputs.request_id)
     ) {
         return;
     }
