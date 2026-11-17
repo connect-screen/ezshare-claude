@@ -5,7 +5,7 @@ import * as v from "valibot";
 import { type Clock, cleanupSignal, withDeadline } from "../shared/async.ts";
 import { AppError } from "../shared/errors.ts";
 import { vscodeDeviceCodeSchema, vscodeUrl } from "../shared/protocol.ts";
-import { type AgentCommand, agentCommand, resolveExecutable, runAgentCommand } from "./agent-process.ts";
+import { type AgentCommand, agentCommand, runAgentCommand } from "./agent-process.ts";
 import { type ActionsContext, agentWorkspace } from "./context.ts";
 import type { Diagnostics } from "./diagnostics.ts";
 import type { ChatRunnerChannel } from "./session.ts";
@@ -56,7 +56,7 @@ export class VscodeSession {
         channel: ChatRunnerChannel,
         signal: AbortSignal,
     ): Promise<{ readonly kind: "ready"; readonly url: string } | { readonly kind: "stopped" }> => {
-        await this.configureTerminal(signal);
+        await this.removeLegacyTerminalProfile(signal);
         this.#diagnostics({ event: "vscode.stage", stage: "checking_authorization" });
         let exitCode: number | null = null;
         try {
@@ -84,8 +84,12 @@ export class VscodeSession {
                 [
                     "tunnel",
                     "--accept-server-license-terms",
+                    "--install-extension",
+                    "anthropic.claude-code",
                     "--name",
                     this.#name,
+                    "--extensions-dir",
+                    join(this.#context.agent.home, "vscode", "extensions"),
                     "--server-data-dir",
                     join(this.#context.agent.home, "vscode", "server"),
                     "--reconnection-grace-time",
@@ -203,14 +207,19 @@ export class VscodeSession {
         }
     };
 
-    private readonly configureTerminal = async (signal: AbortSignal): Promise<void> => {
-        const executable = await resolveExecutable("claude", this.#path);
+    private readonly removeLegacyTerminalProfile = async (signal: AbortSignal): Promise<void> => {
         const script = [
             'const fs = require("node:fs"); const path = require("node:path");',
-            "const [workspace, executable, searchPath] = process.argv.slice(1);",
-            'const directory = path.join(workspace, ".vscode"); fs.mkdirSync(directory, {recursive:true, mode:448});',
-            'const settings = {"terminal.integrated.profiles.linux": {"Ezshare Claude": {path:executable, args:["--continue"], env:{PATH:searchPath}}}, "terminal.integrated.defaultProfile.linux":"Ezshare Claude"};',
-            'try { fs.writeFileSync(path.join(directory,"settings.json"), JSON.stringify(settings,null,2)+"\\n", {mode:384, flag:"wx"}); } catch(error) { if(error.code!=="EEXIST") throw error; }',
+            'const file = path.join(process.argv[1], ".vscode", "settings.json");',
+            'let settings; try { settings = JSON.parse(fs.readFileSync(file,"utf8")); } catch { process.exit(0); }',
+            'if(settings===null || Array.isArray(settings) || typeof settings!=="object") process.exit(0);',
+            'const profiles = settings["terminal.integrated.profiles.linux"];',
+            'const profile = profiles?.["Ezshare Claude"];',
+            'if(profile===null || typeof profile!=="object" || !Array.isArray(profile.args) || profile.args.length!==1 || profile.args[0]!=="--continue" || typeof profile.path!=="string" || !profile.path.endsWith("/claude")) process.exit(0);',
+            'delete profiles["Ezshare Claude"];',
+            'if(Object.keys(profiles).length===0) delete settings["terminal.integrated.profiles.linux"];',
+            'if(settings["terminal.integrated.defaultProfile.linux"]==="Ezshare Claude") delete settings["terminal.integrated.defaultProfile.linux"];',
+            'if(Object.keys(settings).length===0) fs.unlinkSync(file); else fs.writeFileSync(file, JSON.stringify(settings,null,2)+"\\n");',
         ].join("\n");
         await runAgentCommand(
             await agentCommand(
@@ -218,7 +227,7 @@ export class VscodeSession {
                 this.#path,
                 agentWorkspace(this.#context.agent),
                 "node",
-                ["-e", script, agentWorkspace(this.#context.agent), executable, this.#path],
+                ["-e", script, agentWorkspace(this.#context.agent)],
                 {},
             ),
             { timeout: 15_000, failure: "vscode_unavailable", signal },

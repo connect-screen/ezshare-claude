@@ -44,9 +44,21 @@ if (args.join(" ") === "tunnel user login --provider github") {
     });
     check();
 } else if (args[0] === "tunnel" && args.includes("--accept-server-license-terms")) {
-    if (!existsSync(auth)) {
+    if (!existsSync(auth) || args[args.indexOf("--install-extension") + 1] !== "anthropic.claude-code") {
         process.exit(1);
     }
+    const extensionDirectory = args[args.indexOf("--extensions-dir") + 1];
+    if (extensionDirectory !== join(process.env.HOME, "vscode", "extensions")) {
+        process.exit(2);
+    }
+    mkdirSync(extensionDirectory, { recursive: true });
+    writeFileSync(join(extensionDirectory, "installed-program-cache"), "downloaded extension binaries");
+    const downloads = join(process.env.HOME, "vscode", "server", "data", "CachedExtensionVSIXs");
+    mkdirSync(downloads, { recursive: true });
+    writeFileSync(join(downloads, "package.vsix"), "downloaded extension archive");
+    const preferences = join(process.env.HOME, "vscode", "server", "data", "User");
+    mkdirSync(preferences, { recursive: true });
+    writeFileSync(join(preferences, "settings.json"), '{"editor.fontSize":17}');
     rmSync(stopped, { force: true });
     const name = args[args.indexOf("--name") + 1];
     console.log(`Open this link in your browser https://vscode.dev/tunnel/${name}/`);
