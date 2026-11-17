@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { createStore } from "zustand/vanilla";
 import type { SessionChannel } from "../../shared/channel.ts";
 import { AppError, type ErrorCode } from "../../shared/errors.ts";
@@ -10,6 +11,9 @@ import {
     type HistoryEnd,
     type HistoryStart,
     mortyUrl,
+    type SessionAccess,
+    sessionAccessSchema,
+    vscodeUrl,
 } from "../../shared/protocol.ts";
 import type { PendingSession } from "../services/vault.ts";
 import {
@@ -44,10 +48,12 @@ export type ChatPhase =
     | { readonly kind: "starting" }
     | { readonly kind: "queued"; readonly session: PendingSession }
     | { readonly kind: "preparing"; readonly session: PendingSession }
+    | { readonly kind: "authorizing"; readonly session: PendingSession; readonly code: string }
     | {
           readonly kind: "ready";
           readonly session: PendingSession;
           readonly url: string;
+          readonly access: SessionAccess;
           readonly history: HistoryStart;
       }
     | { readonly kind: "stopping"; readonly session: PendingSession; readonly forced: boolean };
@@ -65,12 +71,14 @@ export interface ChatState {
     /** The next session will save its history over an archive this browser cannot read. */
     readonly replacingHistory: boolean;
     readonly newMortyIdentity: boolean;
+    readonly access: SessionAccess;
 }
 
 export interface ChatActions {
     readonly open: () => void;
     readonly close: () => void;
     readonly start: () => void;
+    readonly setAccess: (access: string) => void;
     readonly setNewMortyIdentity: (selected: boolean) => void;
     readonly stop: () => void;
     readonly forceStop: () => void;
@@ -118,7 +126,10 @@ export function createChatStore(member: MemberContext) {
             messages: readonly ChatRunnerMessage[],
             signal: AbortSignal,
         ): Promise<void> => {
-            if (keyed.has(session.requestId) || messages.some((message) => message.kind === "ready")) {
+            if (
+                keyed.has(session.requestId) ||
+                messages.some((message) => message.kind === "ready" || message.kind === "vscode_ready")
+            ) {
                 return;
             }
             const history = await member.vault.history(member.repository.name, member.user.id, signal);
@@ -190,6 +201,7 @@ export function createChatStore(member: MemberContext) {
                     return;
                 case "queued":
                 case "preparing":
+                case "authorizing":
                 case "ready":
                 case "stopping":
                     next = await advance(phase.session, signal);
@@ -232,7 +244,13 @@ export function createChatStore(member: MemberContext) {
             problem: null,
             commandError: null,
             replacingHistory: false,
+            access: "morty",
             newMortyIdentity: false,
+            setAccess: (access) => {
+                if (v.is(sessionAccessSchema, access) && get().phase.kind === "idle" && get().command === null) {
+                    set({ access, newMortyIdentity: false });
+                }
+            },
             setNewMortyIdentity: (selected) => {
                 if (get().phase.kind === "idle" && get().command === null) {
                     set({ newMortyIdentity: selected });
@@ -251,9 +269,10 @@ export function createChatStore(member: MemberContext) {
                         throw new AppError("session_busy");
                     }
                     const newMortyIdentity = get().newMortyIdentity;
+                    const access = get().access;
                     set({ phase: { kind: "starting" } });
                     try {
-                        const session = await beginSession(member, "chat", signal, { newMortyIdentity });
+                        const session = await beginSession(member, "chat", signal, { newMortyIdentity, access });
                         set({ phase: { kind: "queued", session }, newMortyIdentity: false });
                     } catch (cause) {
                         set({ phase });
@@ -263,7 +282,12 @@ export function createChatStore(member: MemberContext) {
             stop: () =>
                 command("stop", async (signal) => {
                     const phase = get().phase;
-                    if (phase.kind !== "ready" && phase.kind !== "preparing" && phase.kind !== "queued") {
+                    if (
+                        phase.kind !== "ready" &&
+                        phase.kind !== "preparing" &&
+                        phase.kind !== "queued" &&
+                        phase.kind !== "authorizing"
+                    ) {
                         return;
                     }
                     const observation = await observeSession(member, phase.session, schemas, signal);
@@ -319,10 +343,20 @@ export function createChatStore(member: MemberContext) {
 
 /** A running session is ready once the runner sent its chat link; until then it is preparing. */
 function progressOf(session: PendingSession, messages: readonly ChatRunnerMessage[]): ChatPhase {
-    const ready = messages.findLast((message) => message.kind === "ready");
-    return ready === undefined
+    const ready = messages.findLast((message) => message.kind === "ready" || message.kind === "vscode_ready");
+    if (ready !== undefined) {
+        return {
+            kind: "ready",
+            session,
+            access: ready.kind === "ready" ? "morty" : "vscode",
+            url: ready.kind === "ready" ? mortyUrl(ready.body.url) : vscodeUrl(ready.body.url),
+            history: ready.body.history,
+        };
+    }
+    const challenge = messages.findLast((message) => message.kind === "vscode_challenge");
+    return challenge === undefined
         ? { kind: "preparing", session }
-        : { kind: "ready", session, url: mortyUrl(ready.body.url), history: ready.body.history };
+        : { kind: "authorizing", session, code: challenge.body.code };
 }
 
 function outcomeOf(
@@ -352,6 +386,7 @@ function interval(state: ChatState): number {
         case "starting":
         case "queued":
         case "preparing":
+        case "authorizing":
         case "stopping":
             return POLL_STARTING_MS;
         case "ready":

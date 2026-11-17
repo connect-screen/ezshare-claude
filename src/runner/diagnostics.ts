@@ -130,6 +130,7 @@ export type DiagnosticRecord =
               | "starting_agent"
               | "resetting_morty_identity"
               | "connecting_morty"
+              | "connecting_vscode"
               | "ready"
               | "idle"
               | "awaiting_authorization"
@@ -137,6 +138,20 @@ export type DiagnosticRecord =
               | "authorized"
               | "stopping"
               | "closed";
+      }
+    | {
+          readonly event: "vscode.stage";
+          readonly stage:
+              | "checking_authorization"
+              | "authorizing"
+              | "starting_tunnel"
+              | "awaiting_authorization"
+              | "ready";
+      }
+    | {
+          readonly event: "vscode.failed";
+          readonly stage: "authorization" | "connection";
+          readonly exitCode: number | null;
       }
     | { readonly event: "morty.output"; readonly stdout: MortyOutputFormat; readonly stderr: MortyOutputFormat }
     | { readonly event: "morty.retrying"; readonly code: (typeof MORTY_RETRY_CODES)[number]; readonly attempt: number }

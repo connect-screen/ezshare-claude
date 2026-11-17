@@ -27,6 +27,7 @@ import {
 } from "./diagnostics.ts";
 import { claudeProject, type HistoryOwner, latestSessionId, restoreHistory, saveHistory } from "./history-archive.ts";
 import { type ChatRunnerChannel, createChatChannel, type RunnerPorts, runSession } from "./session.ts";
+import { VscodeSession } from "./vscode.ts";
 
 const STOP_POLL_MS = 15_000;
 
@@ -61,6 +62,10 @@ export async function runChat(
             }
             const path = environment["PATH"] ?? "";
             const agent = new AgentSession(context, path, token, ports.diagnostics, ports.clock);
+            const vscode =
+                context.inputs.access === "vscode"
+                    ? new VscodeSession(context, path, token, ports.clock, ports.diagnostics)
+                    : null;
             const owner = { repository: context.repository, userId: context.userId };
             const archive = historyArchivePath(context.runnerTemp);
             // Set only once the agent's home holds exactly what may be saved over the member's archive.
@@ -104,15 +109,36 @@ export async function runChat(
                         if (start !== "unreadable") {
                             saving = { key: request.key, sessionId };
                         }
-                        if (context.inputs.reset_morty_identity === "true") {
+                        if (vscode === null && context.inputs.reset_morty_identity === "true") {
                             ports.diagnostics({ event: "session.stage", stage: "resetting_morty_identity" });
                             await agent.resetMortyIdentity(bounded);
                         }
-                        ports.diagnostics({ event: "session.stage", stage: "connecting_morty" });
-                        const ready = await agent.connectMorty(sessionId, bounded);
-                        await channel.send({ kind: "ready", body: { ...ready, history: start } }, bounded);
+                        if (vscode === null) {
+                            ports.diagnostics({ event: "session.stage", stage: "connecting_morty" });
+                            const ready = await agent.connectMorty(sessionId, bounded);
+                            await channel.send({ kind: "ready", body: { ...ready, history: start } }, bounded);
+                        } else {
+                            ports.diagnostics({ event: "session.stage", stage: "connecting_vscode" });
+                            const ready = await vscode.connect(channel, bounded);
+                            if (ready.kind === "stopped") {
+                                return;
+                            }
+                            await channel.send(
+                                { kind: "vscode_ready", body: { url: ready.url, history: start } },
+                                bounded,
+                            );
+                        }
                         ports.diagnostics({ event: "session.stage", stage: "ready" });
-                        await waitForStop(channel, deadline, ports, agent.activity, bounded);
+                        await waitForStop(
+                            channel,
+                            deadline,
+                            ports,
+                            async (activitySignal) => {
+                                vscode?.assertRunning();
+                                return await agent.activity(activitySignal);
+                            },
+                            bounded,
+                        );
                     },
                     ports.clock,
                 );
@@ -123,7 +149,11 @@ export async function runChat(
                 }
             } finally {
                 ports.diagnostics({ event: "session.stage", stage: "stopping" });
-                await agent.stopMorty();
+                if (vscode === null) {
+                    await agent.stopMorty();
+                } else {
+                    await vscode.stop();
+                }
                 if (saving !== null) {
                     history = await archiveHistory(context, path, owner, archive, saving, ports);
                 }

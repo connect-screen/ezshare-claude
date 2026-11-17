@@ -100,7 +100,7 @@ export function runAgentCommand(
     );
 }
 
-async function resolveExecutable(program: string, path: string): Promise<string> {
+export async function resolveExecutable(program: string, path: string): Promise<string> {
     if (!/^[a-z][a-z0-9-]*$/u.test(program)) {
         throw new AppError("invalid_input");
     }

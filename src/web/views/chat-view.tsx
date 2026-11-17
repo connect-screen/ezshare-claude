@@ -23,6 +23,7 @@ export function ChatView({
     const command = useStore(store, (state) => state.command);
     const problem = useStore(store, (state) => state.problem);
     const commandError = useStore(store, (state) => state.commandError);
+    const access = useStore(store, (state) => state.access);
     const newMortyIdentity = useStore(store, (state) => state.newMortyIdentity);
     const replacingHistory = useStore(store, (state) => state.replacingHistory);
     const actions = store.getState();
@@ -59,27 +60,45 @@ export function ChatView({
                                 {phase.outcome !== null && <OutcomeNotice outcome={phase.outcome} />}
                                 <p className="text-sm">{chatCopy.intro}</p>
                                 {replacingHistory && <Notice tone="info">{chatCopy.replacingHistory}</Notice>}
-                                <div className="space-y-1">
-                                    <label className="flex items-center gap-2 text-sm">
-                                        <input
-                                            type="checkbox"
-                                            checked={newMortyIdentity}
-                                            disabled={command !== null}
-                                            aria-describedby="new-morty-identity-hint"
-                                            onChange={(event) =>
-                                                actions.setNewMortyIdentity(event.currentTarget.checked)
-                                            }
-                                            className="size-4 accent-emerald-700"
-                                        />
-                                        {chatCopy.newMortyIdentity}
-                                    </label>
-                                    <p
-                                        id="new-morty-identity-hint"
-                                        className="text-sm text-stone-600 dark:text-stone-400"
+                                <label className="grid gap-2 text-sm font-medium">
+                                    {chatCopy.access}
+                                    <select
+                                        value={access}
+                                        disabled={command !== null}
+                                        onChange={(event) => actions.setAccess(event.currentTarget.value)}
+                                        aria-describedby="session-access-hint"
+                                        className="min-h-11 rounded-lg border border-stone-300 bg-white px-3 text-stone-900 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-100"
                                     >
-                                        {chatCopy.newMortyIdentityHint}
-                                    </p>
-                                </div>
+                                        <option value="morty">{chatCopy.accessMorty}</option>
+                                        <option value="vscode">{chatCopy.accessVscode}</option>
+                                    </select>
+                                </label>
+                                <p id="session-access-hint" className="text-sm text-stone-600 dark:text-stone-400">
+                                    {chatCopy.accessHint}
+                                </p>
+                                {access === "morty" && (
+                                    <div className="space-y-1">
+                                        <label className="flex items-center gap-2 text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={newMortyIdentity}
+                                                disabled={command !== null}
+                                                aria-describedby="new-morty-identity-hint"
+                                                onChange={(event) =>
+                                                    actions.setNewMortyIdentity(event.currentTarget.checked)
+                                                }
+                                                className="size-4 accent-emerald-700"
+                                            />
+                                            {chatCopy.newMortyIdentity}
+                                        </label>
+                                        <p
+                                            id="new-morty-identity-hint"
+                                            className="text-sm text-stone-600 dark:text-stone-400"
+                                        >
+                                            {chatCopy.newMortyIdentityHint}
+                                        </p>
+                                    </div>
+                                )}
                                 <Button busy={command === "start"} onClick={actions.start}>
                                     {chatCopy.start}
                                 </Button>
@@ -138,12 +157,32 @@ export function ChatView({
                                 )}
                             </>
                         );
+                    case "authorizing":
+                        return (
+                            <>
+                                <Notice tone="info" title={chatCopy.vscodeAuthorizationTitle}>
+                                    {chatCopy.vscodeAuthorizationHint}
+                                </Notice>
+                                <code className="block select-all text-2xl font-semibold tracking-widest">
+                                    {phase.code}
+                                </code>
+                                <ExternalLink href="https://github.com/login/device" prominent>
+                                    {chatCopy.vscodeAuthorize}
+                                </ExternalLink>
+                                <p role="status" className="text-sm">
+                                    {chatCopy.vscodeAuthorizationWaiting}
+                                </p>
+                                <Button variant="secondary" busy={command === "stop"} onClick={actions.stop}>
+                                    {commonCopy.cancel}
+                                </Button>
+                            </>
+                        );
                     case "ready":
                         return (
                             <>
                                 <Announcer message={chatCopy.readyAnnouncement} />
                                 <Notice tone="success" title={chatCopy.readyTitle}>
-                                    {chatCopy.readyBody}
+                                    {phase.access === "vscode" ? chatCopy.vscodeReadyBody : chatCopy.readyBody}
                                 </Notice>
                                 <HistoryNotice
                                     start={phase.history}
@@ -152,9 +191,11 @@ export function ChatView({
                                     onReplace={actions.replaceHistory}
                                 />
                                 <ExternalLink href={phase.url} prominent>
-                                    {chatCopy.open}
+                                    {phase.access === "vscode" ? chatCopy.vscodeOpen : chatCopy.open}
                                 </ExternalLink>
-                                <p className="text-sm text-stone-600 dark:text-stone-400">{chatCopy.readyHint}</p>
+                                <p className="text-sm text-stone-600 dark:text-stone-400">
+                                    {phase.access === "vscode" ? chatCopy.vscodeReadyHint : chatCopy.readyHint}
+                                </p>
                                 <Button variant="danger" busy={command === "stop"} onClick={actions.stop}>
                                     {chatCopy.end}
                                 </Button>

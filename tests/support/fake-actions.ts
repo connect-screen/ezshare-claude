@@ -55,6 +55,7 @@ export async function startFakeActions(
         ["sudo", "fake-sudo.mjs"],
         ["claude", "fake-claude.mjs"],
         ["npx", "fake-morty.mjs"],
+        ["code", "fake-vscode.mjs"],
     ] as const) {
         await writeFile(join(bin, name), `#!/bin/sh\nexec "${process.execPath}" "${join(FIXTURES, script)}" "$@"\n`);
         await chmod(join(bin, name), 0o755);
@@ -182,6 +183,27 @@ export async function startFakeActions(
 
     return {
         jobs,
+        failVscode: async (runId: number) => {
+            const job = jobs.get(runId);
+            if (job === undefined) {
+                throw new Error("Expected a VS Code session");
+            }
+            await writeFile(join(job.agentHome, "vscode", "cli", "failed"), "failed");
+        },
+        editVscodeWorkspace: async (runId: number) => {
+            const job = jobs.get(runId);
+            if (job === undefined) {
+                throw new Error("Expected a VS Code session");
+            }
+            await writeFile(join(job.agentHome, "workspace", "vscode-notes.txt"), "workspace from vscode\n");
+        },
+        authorizeVscode: async (runId: number) => {
+            const job = jobs.get(runId);
+            if (job === undefined) {
+                throw new Error("Expected a VS Code session");
+            }
+            await writeFile(join(job.agentHome, "vscode", "cli", "approved"), "approved");
+        },
         /** Keeps dispatched runs queued until `release`. */
         holdQueue: () => {
             hold = true;

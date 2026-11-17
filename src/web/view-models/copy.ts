@@ -54,6 +54,8 @@ export function errorMessage(code: ConnectionError): string {
             return "No Claude account has been shared with this repository yet. Ask the account owner to share one.";
         case "agent_failed":
             return "Claude could not start. If this keeps happening, ask the account owner to share the account again.";
+        case "vscode_unavailable":
+            return "VS Code could not connect. Start a new session and authorize again if asked.";
         case "morty_unavailable":
             return "Morty could not connect. Start a new session in a few minutes.";
         case "provider_failed":
@@ -232,6 +234,19 @@ export const chatCopy = {
     readyAnnouncement: "Your session is ready.",
     readyTitle: "Your session is ready",
     readyBody: "Claude is running with the team account in a workspace only you can reach.",
+    access: "Open with",
+    accessMorty: "Morty",
+    accessVscode: "VS Code",
+    accessHint: "Choose an interface for the next session. Both use your saved Claude conversation and workspace.",
+    vscodeAuthorizationTitle: "Authorize VS Code",
+    vscodeAuthorizationWaiting: "Waiting for GitHub authorization. This page updates automatically.",
+    vscodeReadyBody: "Your private workspace is ready in VS Code.",
+    vscodeAuthorizationHint:
+        "Open GitHub, enter this code, and approve Visual Studio Code. Use the same GitHub account when opening VS Code. Your Claude account does not need another login.",
+    vscodeAuthorize: "Authorize VS Code",
+    vscodeOpen: "Open VS Code",
+    vscodeReadyHint:
+        "Use the same GitHub account you authorized. Open a new terminal to continue Claude Code. If it opens a shell, run claude --continue. End this session here to save your workspace.",
     open: "Open chat",
     readyHint: `Anyone with this link can use your session until it ends, so do not share it. The session ends after ${chatLifetime}, or after ${chatIdleStop} without a message. End it here when you are done, so your history is saved.`,
     end: "End session",
