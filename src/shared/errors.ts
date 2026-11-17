@@ -29,6 +29,8 @@ export type ErrorCode =
     | "storage_unavailable"
     | "history_key_missing"
     | "history_too_large"
+    | "account_name_invalid"
+    | "account_name_taken"
     | "shared_account_missing"
     | "agent_failed"
     | "morty_unavailable"

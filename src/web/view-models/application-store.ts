@@ -198,7 +198,17 @@ export function createApplicationStore(ports: ApplicationPorts) {
                     },
                 );
             },
-            showPage: (page) => set({ page }),
+            showPage: (page) => {
+                set({ page });
+                const phase = get().phase;
+                if (phase.kind === "connected") {
+                    if (page === "use") {
+                        phase.workspace.chat.getState().refresh();
+                    } else {
+                        phase.workspace.sharing.getState().refresh();
+                    }
+                }
+            },
         };
     });
 }
