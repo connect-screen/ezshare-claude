@@ -4,11 +4,17 @@ import { join } from "node:path";
 import * as v from "valibot";
 import { type Clock, cleanupSignal, withDeadline } from "../shared/async.ts";
 import { AppError } from "../shared/errors.ts";
-import { VSCODE_DESKTOP_WORKSPACE, vscodeDeviceCodeSchema, vscodeUrl } from "../shared/protocol.ts";
+import { vscodeDeviceCodeSchema, vscodeUrl, vscodeWorkspace } from "../shared/protocol.ts";
 import { type AgentCommand, agentCommand, runAgentCommand } from "./agent-process.ts";
 import { type ActionsContext, agentWorkspace } from "./context.ts";
 import type { Diagnostics } from "./diagnostics.ts";
-import type { ChatRunnerChannel } from "./session.ts";
+
+interface VscodeAuthorization {
+    readonly challenge: (code: string, signal: AbortSignal) => Promise<void>;
+    readonly stopRequested: (signal: AbortSignal) => Promise<boolean>;
+}
+
+type VscodeAccess = { readonly kind: "chat"; readonly token: string } | { readonly kind: "login" };
 
 type Progress =
     | { readonly kind: "starting" }
@@ -20,13 +26,16 @@ export class VscodeSession {
     readonly #path: string;
     readonly #variables: Readonly<Record<string, string>>;
     readonly #clock: Clock;
-    readonly #claudeVariables: Readonly<Record<string, string>>;
+    readonly #serverVariables: Readonly<Record<string, string>>;
     readonly #diagnostics: Diagnostics;
     readonly #name: string;
     #process: TunnelProcess | null = null;
     #progress: Progress = { kind: "starting" };
 
-    constructor(context: ActionsContext, path: string, token: string, clock: Clock, diagnostics: Diagnostics) {
+    constructor(context: ActionsContext, path: string, access: VscodeAccess, clock: Clock, diagnostics: Diagnostics) {
+        if (access.kind !== context.purpose) {
+            throw new AppError("unsafe_execution");
+        }
         this.#context = context;
         this.#path = path;
         this.#clock = clock;
@@ -34,15 +43,20 @@ export class VscodeSession {
         this.#name =
             "ez-" +
             createHash("sha256")
-                .update(`${context.repository.toLowerCase()}:${context.userId}`)
+                .update(
+                    `${context.repository.toLowerCase()}:${context.userId}${access.kind === "login" ? ":login" : ""}`,
+                )
                 .digest("hex")
                 .slice(0, 16);
-        this.#claudeVariables = {
-            SHELL: "/bin/bash",
-            DISABLE_AUTOUPDATER: "1",
-            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-            CLAUDE_CODE_OAUTH_TOKEN: token,
-        };
+        this.#serverVariables =
+            access.kind === "login"
+                ? { SHELL: "/bin/bash" }
+                : {
+                      SHELL: "/bin/bash",
+                      DISABLE_AUTOUPDATER: "1",
+                      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+                      CLAUDE_CODE_OAUTH_TOKEN: access.token,
+                  };
         this.#variables = {
             TERM: "xterm-256color",
             BROWSER: "false",
@@ -53,7 +67,7 @@ export class VscodeSession {
     }
 
     readonly connect = async (
-        channel: ChatRunnerChannel,
+        authorization: VscodeAuthorization,
         signal: AbortSignal,
     ): Promise<{ readonly kind: "ready"; readonly url: string } | { readonly kind: "stopped" }> => {
         await this.prepareWorkspace(signal);
@@ -73,7 +87,14 @@ export class VscodeSession {
                 throw cause;
             }
             this.#diagnostics({ event: "vscode.stage", stage: "authorizing" });
-            if (!(await this.runStage(["tunnel", "user", "login", "--provider", "github"], "exit", channel, signal))) {
+            if (
+                !(await this.runStage(
+                    ["tunnel", "user", "login", "--provider", "github"],
+                    "exit",
+                    authorization,
+                    signal,
+                ))
+            ) {
                 return { kind: "stopped" };
             }
         }
@@ -84,8 +105,7 @@ export class VscodeSession {
                 [
                     "tunnel",
                     "--accept-server-license-terms",
-                    "--install-extension",
-                    "anthropic.claude-code",
+                    ...(this.#context.purpose === "chat" ? ["--install-extension", "anthropic.claude-code"] : []),
                     "--name",
                     this.#name,
                     "--extensions-dir",
@@ -96,7 +116,7 @@ export class VscodeSession {
                     "0",
                 ],
                 "link",
-                channel,
+                authorization,
                 signal,
             ))
         ) {
@@ -141,13 +161,13 @@ export class VscodeSession {
             agentWorkspace(this.#context.agent),
             "code",
             args,
-            serving ? { ...this.#variables, ...this.#claudeVariables } : this.#variables,
+            serving ? { ...this.#variables, ...this.#serverVariables } : this.#variables,
         );
 
     private readonly runStage = async (
         args: readonly string[],
         until: "exit" | "link",
-        channel: ChatRunnerChannel,
+        authorization: VscodeAuthorization,
         signal: AbortSignal,
     ): Promise<boolean> =>
         withDeadline(
@@ -159,12 +179,12 @@ export class VscodeSession {
                 let sentCode: string | null = null;
                 for (;;) {
                     bounded.throwIfAborted();
-                    if ((await channel.receive(bounded)).some((message) => message.kind === "stop")) {
+                    if (await authorization.stopRequested(bounded)) {
                         return false;
                     }
                     const progress = this.#progress;
                     if (progress.kind === "authorizing" && progress.code !== sentCode) {
-                        await channel.send({ kind: "vscode_challenge", body: { code: progress.code } }, bounded);
+                        await authorization.challenge(progress.code, bounded);
                         this.#diagnostics({ event: "vscode.stage", stage: "awaiting_authorization" });
                         sentCode = progress.code;
                     }
@@ -216,7 +236,7 @@ export class VscodeSession {
                 folders: [{ path: process.argv[1] }],
                 settings: {
                     "workbench.browser.enableRemoteProxy": true,
-                    "workbench.browser.dataStorage": "workspace"
+                    "workbench.browser.dataStorage": process.argv[3]
                 }
             }, null, 2) + "\n", { mode: 384 });
             const file = path.join(process.argv[1], ".vscode", "settings.json");
@@ -251,7 +271,8 @@ export class VscodeSession {
                     "-e",
                     script,
                     agentWorkspace(this.#context.agent),
-                    join(this.#context.agent.home, VSCODE_DESKTOP_WORKSPACE),
+                    join(this.#context.agent.home, vscodeWorkspace(this.#context.purpose)),
+                    this.#context.purpose === "login" ? "ephemeral" : "workspace",
                 ],
                 {},
             ),

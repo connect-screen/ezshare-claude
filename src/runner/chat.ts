@@ -64,7 +64,7 @@ export async function runChat(
             const agent = new AgentSession(context, path, token, ports.diagnostics, ports.clock);
             const vscode =
                 context.inputs.access === "vscode"
-                    ? new VscodeSession(context, path, token, ports.clock, ports.diagnostics)
+                    ? new VscodeSession(context, path, { kind: "chat", token }, ports.clock, ports.diagnostics)
                     : null;
             const owner = { repository: context.repository, userId: context.userId };
             const archive = historyArchivePath(context.runnerTemp);
@@ -119,7 +119,15 @@ export async function runChat(
                             await channel.send({ kind: "ready", body: { ...ready, history: start } }, bounded);
                         } else {
                             ports.diagnostics({ event: "session.stage", stage: "connecting_vscode" });
-                            const ready = await vscode.connect(channel, bounded);
+                            const ready = await vscode.connect(
+                                {
+                                    challenge: (code, signal) =>
+                                        channel.send({ kind: "vscode_challenge", body: { code } }, signal),
+                                    stopRequested: async (signal) =>
+                                        (await channel.receive(signal)).some((message) => message.kind === "stop"),
+                                },
+                                bounded,
+                            );
                             if (ready.kind === "stopped") {
                                 return;
                             }
