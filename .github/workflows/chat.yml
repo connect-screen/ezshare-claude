@@ -73,6 +73,8 @@ jobs:
       - name: Install the VS Code CLI
         if: inputs.access == 'vscode'
         run: |
+          # The official CLI seals file credentials with the OS hostname; ephemeral runner names cannot restore them.
+          sudo hostname ezshare-agent
           curl --fail --location --retry 3 --max-time 180 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' --output "$RUNNER_TEMP/vscode-cli.tar.gz"
           mkdir "$RUNNER_TEMP/vscode-cli"
           tar -xf "$RUNNER_TEMP/vscode-cli.tar.gz" -C "$RUNNER_TEMP/vscode-cli" code
