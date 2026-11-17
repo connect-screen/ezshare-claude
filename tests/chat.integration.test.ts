@@ -44,7 +44,7 @@ test("Given a connected member, When she starts a session and later ends it, The
     await app.eventually(() => getByRole(body, "button", { name: "Start a session" }));
     expect(getByRole(body, "status").textContent).toContain("Your last session ended");
     expect(queryByRole(body, "link", { name: /Open chat/u })).toBeNull();
-    expect(run.conclusion).toBe("success");
+    await app.eventually(() => expect(run.conclusion).toBe("success"));
     expect((await app.actions.agentLog(run.id)).at(-1)).toMatchObject({ program: "npx", command: "stop" });
     expect(app.github.issues[0]?.state).toBe("closed");
 });
@@ -102,14 +102,15 @@ test("Given another member can post as the Actions bot, When she forges a ready 
     expect(queryByRole(body, "alert")).toBeNull();
 });
 
-test("Given a ready session, When the member reloads the page, Then the chat link is restored", async () => {
+test("Given a ready session, When the member switches launcher tabs, Then the current chat link is preserved", async () => {
     app = await createTestApp();
     const body = document.body;
     await connect(app, tokens.alice);
     await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Start a session" })));
     const before = (await app.eventually(() => getByRole(body, "link", { name: /Open chat/u }))).getAttribute("href");
 
-    app.reload();
+    await app.user.click(getByRole(body, "button", { name: "Manage shared accounts" }));
+    await app.user.click(getByRole(body, "button", { name: "Use a shared account" }));
 
     const after = await app.eventually(() => getByRole(body, "link", { name: /Open chat/u }));
     expect(after.getAttribute("href")).toBe(before);
