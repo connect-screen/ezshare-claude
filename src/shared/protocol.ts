@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { accountIdSchema } from "./accounts.ts";
 import { AppError } from "./errors.ts";
 
 /** A session is one workflow run that serves exactly one purpose for one member. */
@@ -44,6 +45,7 @@ export const dispatchInputsSchema = v.object({
     client_key: channelKeySchema,
     access: v.optional(sessionAccessSchema),
     login_access: v.optional(loginAccessSchema),
+    account: v.optional(accountIdSchema),
     reset_morty_identity: v.optional(v.picklist(["true", "false"])),
 });
 export type DispatchInputs = Readonly<v.InferOutput<typeof dispatchInputsSchema>>;

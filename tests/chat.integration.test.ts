@@ -115,15 +115,13 @@ test("Given a ready session, When the member reloads the page, Then the chat lin
     expect(after.getAttribute("href")).toBe(before);
 });
 
-test("Given no account has been shared, When a member starts a session, Then she is told to ask the account owner", async () => {
+test("Given no account has been shared, When a member opens the launcher, Then an empty state directs her to account sharing before a run can start", async () => {
     app = await createTestApp({ sharedToken: null });
-    const body = document.body;
     await connect(app, tokens.alice);
-    await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Start a session" })));
-
-    const alert = await app.eventually(() => getByRole(body, "alert"));
-    expect(alert.textContent).toContain("No Claude account has been shared with this repository yet");
-    expect(getByRole(body, "button", { name: "Start a session" })).toBeTruthy();
+    await app.eventually(() => getByRole(document.body, "status", { name: "Shared accounts" }));
+    expect(document.body.textContent).toContain("No accounts shared yet");
+    expect(queryByRole(document.body, "button", { name: "Start a session" })).toBeNull();
+    expect(app.github.runs).toEqual([]);
 });
 
 test("Given another member dispatches a session into my mailbox with her own key, When the run starts, Then it refuses before posting anything", async () => {
@@ -167,11 +165,12 @@ test("Given a member with an unfinished account-sharing run, When she opens her 
     const body = document.body;
     app.actions.holdQueue();
     await connect(app, tokens.olivia);
-    await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Share your account" })));
+    await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Manage shared accounts" })));
+    await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Reauthorize" })));
     await app.user.click(getByRole(body, "button", { name: "I understand, start authorization" }));
     await app.eventually(() => getByRole(body, "button", { name: "Cancel" }));
 
-    await app.user.click(getByRole(body, "button", { name: "Use the team account" }));
+    await app.user.click(getByRole(body, "button", { name: "Use a shared account" }));
     const end = await app.eventually(() => getByRole(body, "button", { name: /^End run/u }));
     expect(getByRole(body, "link", { name: /Account sharing run/u })).toBeTruthy();
     await app.user.click(end);
@@ -201,10 +200,11 @@ test("Given an account-sharing run shown on the session page, When it finishes b
     const body = document.body;
     app.actions.holdQueue();
     await connect(app, tokens.olivia);
-    await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Share your account" })));
+    await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Manage shared accounts" })));
+    await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Reauthorize" })));
     await app.user.click(getByRole(body, "button", { name: "I understand, start authorization" }));
     await app.eventually(() => getByRole(body, "button", { name: "Cancel" }));
-    await app.user.click(getByRole(body, "button", { name: "Use the team account" }));
+    await app.user.click(getByRole(body, "button", { name: "Use a shared account" }));
     const end = await app.eventually(() => getByRole(body, "button", { name: /^End run/u }));
     const run = app.github.runs[0];
     if (run === undefined) {

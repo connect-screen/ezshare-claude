@@ -1,3 +1,4 @@
+import { accountName, type SharedAccount } from "../../shared/accounts.ts";
 import { repositoryName, type WorkflowRun } from "../../shared/github/client.ts";
 import { CHAT_IDLE_STOP_MS, lifetime } from "../../shared/protocol.ts";
 import type { ConnectionError, Page } from "./application-store.ts";
@@ -25,9 +26,9 @@ export function errorMessage(code: ConnectionError): string {
         case "issues_write_forbidden":
             return "GitHub denied updating the encrypted session channel. This step requires repository permission Issues: Read and write.";
         case "secrets_read_forbidden":
-            return "GitHub denied reading the repository secret encryption key. This step requires repository permission Secrets: Read. To complete account sharing, set Secrets to Read and write.";
+            return "GitHub denied reading shared-account metadata or the repository encryption key. This step requires repository permission Secrets: Read. To complete account sharing, set Secrets to Read and write.";
         case "secrets_write_forbidden":
-            return "GitHub denied saving the shared Claude account. This step requires repository permission Secrets: Read and write.";
+            return "GitHub denied saving or removing a shared Claude account. This step requires repository permission Secrets: Read and write.";
         case "contents_read_forbidden":
             return "GitHub denied checking the default branch. This step requires repository permission Contents: Read.";
         case "forbidden":
@@ -52,6 +53,10 @@ export function errorMessage(code: ConnectionError): string {
             return "The workspace is too large to save. The previous saved history was kept.";
         case "history_key_missing":
             return "The runner did not receive your personal history key. Keep this launcher open and start again. It did not create a new Computer or replace your saved history.";
+        case "account_name_invalid":
+            return "Enter a short account name (up to 36 English characters or 12 Chinese characters).";
+        case "account_name_taken":
+            return "An account already uses this name. Choose another name, or reauthorize the existing account.";
         case "shared_account_missing":
             return "No Claude account has been shared with this repository yet. Ask the account owner to share one.";
         case "agent_failed":
@@ -98,9 +103,7 @@ export function tokenTemplates(repository: string): TokenTemplates | null {
         url.searchParams.set("expires_in", "30");
         url.searchParams.set("actions", "write");
         url.searchParams.set("issues", "write");
-        if (secrets) {
-            url.searchParams.set("secrets", "write");
-        }
+        url.searchParams.set("secrets", secrets ? "write" : "read");
         return url.href;
     };
     return { owner, name: repo, member: template(false), ownerSharing: template(true) };
@@ -132,7 +135,7 @@ export const commonCopy = {
 
 export const launcherCopy = {
     product: "ezshare-claude",
-    headline: "One team account, private sessions.",
+    headline: "Shared accounts, private sessions.",
     tagline: "Use Claude Code with the account your team shares, in a session only you can reach.",
 } as const;
 
@@ -159,7 +162,7 @@ export const connectionFormCopy = {
     },
     memberLink: commonCopy.memberTokenLink,
     memberHint:
-        "For chatting with an account someone else shared. Includes Actions and Issues read and write; does not include Secrets access.",
+        "For chatting with an account someone else shared. Includes Actions and Issues read and write, plus Secrets read to list shared accounts. Secret values cannot be read through this API.",
     ownerLink: commonCopy.ownerTokenLink,
     ownerHint:
         "For authorizing and sharing your own account, and chatting. Includes Actions, Issues and Secrets read and write.",
@@ -191,8 +194,8 @@ export const workspaceCopy = {
     publicBody: "Anyone can see when sessions start and end.",
     sections: "Sections",
     pages: {
-        use: "Use the team account",
-        share: "Share your account",
+        use: "Use a shared account",
+        share: "Manage shared accounts",
     } satisfies Record<Page, string>,
 } as const;
 
@@ -207,7 +210,7 @@ export const tokenAccessCopy = {
         beforeOwner: "Select ",
         beforeRepository: " as the token's resource owner and allow access to",
         afterRepository:
-            ". Sessions need Actions and Issues read and write. Sharing your account also needs Secrets read and write. If the token is pending organization approval, ask an organization owner to approve it. Your GitHub account also needs write access to the repository.",
+            ". Sessions need Actions and Issues read and write, and Secrets read to list accounts. Sharing your account also needs Secrets read and write. If the token is pending organization approval, ask an organization owner to approve it. Your GitHub account also needs write access to the repository.",
     },
     replace: "Replace GitHub token",
     replaceHint:
@@ -301,7 +304,7 @@ export function chatOutcomeText(outcome: ChatOutcome): string {
 }
 
 export const sharingCopy = {
-    title: "Share your Claude account",
+    title: "Shared Claude accounts",
     method: "Authorize Claude using",
     browserMethod: "This browser",
     runnerMethod: "Runner · Desktop VS Code",
@@ -329,7 +332,7 @@ export const sharingCopy = {
     risks: [
         "Every member with write access can read the token from inside their own session and keep using it elsewhere. Share only with people you would give your account to.",
         "The token stays valid for one year unless you revoke it on claude.ai.",
-        "Sharing replaces any account already shared with this repository.",
+        "Reauthorizing replaces only the selected account. Adding an account keeps existing accounts.",
         "Check that your Claude plan's terms allow use by your team.",
     ],
     unprotectedTitle: "The default branch is not protected",
@@ -354,11 +357,51 @@ export const sharingCopy = {
         beforeLink: "To stop sharing, revoke the token in ",
         link: "your Claude account settings",
         url: "https://claude.ai/settings",
-        afterLink: " and delete the repository secret.",
+        afterLink:
+            ". Removing an account here prevents new sessions from choosing it; revoke it on Claude to also invalidate copied credentials.",
     },
     sharedAnnouncement: "Your Claude account is shared with the team.",
     sharedTitle: "Shared with the team",
     sharedBody: "Members can now start sessions with your account.",
     cancelled: "Authorization cancelled. Nothing was shared.",
     failedTitle: "Sharing did not complete",
+} as const;
+
+export function sharedAccountLabel(account: Pick<SharedAccount, "name">): string {
+    return account.name ?? "Previously shared account";
+}
+
+export function sessionAccountLabel(id: string): string {
+    return sharedAccountLabel({ name: accountName(id) });
+}
+
+export const accountsCopy = {
+    title: "Shared accounts",
+    count: (count: number) => `${count} shared ${count === 1 ? "account" : "accounts"}`,
+    loading: "Checking shared accounts…",
+    failed: "Could not check shared accounts",
+    retry: "Check accounts again",
+    empty: "No accounts shared yet",
+    emptyHint: "Share a Claude account to let repository members start private sessions.",
+    share: "Share a Claude account",
+    shared: "Shared",
+    availability: "A stored credential is available. Claude checks whether it is still valid when a session starts.",
+    picker: "Claude account",
+    choose: "Choose an account",
+    add: "Add account",
+    back: "Back to accounts",
+    name: "Account name",
+    writeAccess: "Adding, reauthorizing, or removing accounts requires a GitHub token with Secrets: Read and write.",
+    nameHint:
+        "Use a short label your team will recognize. This label is visible to people who can list repository secrets.",
+    reauthorize: "Reauthorize",
+    remove: "Remove",
+    removeAction: "Remove account",
+    removeTitle: (name: string) => `Remove ${name}?`,
+    removeHint:
+        "New sessions will no longer be able to select this account. Running sessions can keep using this credential. Conversation history is kept. Revoke the token on Claude to invalidate any copies.",
+    replaceHint: (name: string) => `Reauthorize ${name}. Only this account's stored credential will be replaced.`,
+    authorizeTitle: "Authorize the account",
+    updated: (date: string) => `Updated ${new Date(date).toLocaleString()}`,
+    using: (name: string) => `Account: ${name}`,
 } as const;

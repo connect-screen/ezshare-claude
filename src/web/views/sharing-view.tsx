@@ -6,8 +6,16 @@ import { Button } from "../components/ui/button.tsx";
 import { Card } from "../components/ui/card.tsx";
 import { ExternalLink } from "../components/ui/external-link.tsx";
 import { Announcer, Notice } from "../components/ui/notice.tsx";
-import { commonCopy, errorMessage, sharingCopy } from "../view-models/copy.ts";
+import {
+    accountsCopy,
+    commonCopy,
+    errorMessage,
+    sessionAccountLabel,
+    sharedAccountLabel,
+    sharingCopy,
+} from "../view-models/copy.ts";
 import type { SharingOutcome, SharingStore } from "../view-models/sharing-store.ts";
+import { AccountsManager } from "./accounts-view.tsx";
 
 /** Sharing the owner's Claude account with the repository. */
 export function SharingView({
@@ -17,6 +25,9 @@ export function SharingView({
     readonly store: SharingStore;
     readonly branchProtected: boolean;
 }) {
+    const editor = useStore(store, (state) => state.editor);
+    const accounts = useStore(store, (state) => state.accounts);
+    const account = useStore(store, (state) => state.account);
     const phase = useStore(store, (state) => state.phase);
     const command = useStore(store, (state) => state.command);
     const problem = useStore(store, (state) => state.problem);
@@ -33,6 +44,7 @@ export function SharingView({
                 </Notice>
             )}
             {commandError !== null && <Notice tone="error">{errorMessage(commandError)}</Notice>}
+            {inProgress && <p className="text-sm font-medium">{accountsCopy.using(sessionAccountLabel(account))}</p>}
             {inProgress && (
                 <ProgressSteps
                     label={sharingCopy.progress}
@@ -58,39 +70,93 @@ export function SharingView({
                         return (
                             <>
                                 {phase.outcome !== null && <OutcomeNotice outcome={phase.outcome} />}
-                                <p className="text-sm">{sharingCopy.intro}</p>
-                                <Notice tone="warning" title={sharingCopy.risksTitle}>
-                                    <ul className="list-disc space-y-1 pl-5">
-                                        {sharingCopy.risks.map((risk) => (
-                                            <li key={risk}>{risk}</li>
-                                        ))}
-                                    </ul>
-                                </Notice>
-                                {!branchProtected && (
-                                    <Notice tone="warning" title={sharingCopy.unprotectedTitle}>
-                                        {sharingCopy.unprotectedBody}
-                                    </Notice>
-                                )}
-                                <label className="grid gap-2 text-sm font-medium">
-                                    {sharingCopy.method}
-                                    <select
-                                        value={method}
-                                        disabled={command !== null}
-                                        onChange={(event) => actions.selectMethod(event.currentTarget.value)}
-                                        className="min-h-11 rounded-lg border border-stone-300 bg-white px-3 text-stone-900 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-100"
+                                <AccountsManager
+                                    catalog={accounts}
+                                    editor={editor}
+                                    busy={command !== null}
+                                    onAdd={actions.addAccount}
+                                    onEdit={actions.editAccount}
+                                    onRemove={actions.removeAccount}
+                                    onCancel={actions.closeEditor}
+                                    onRetry={actions.refresh}
+                                />
+                                {(editor.kind === "add" || editor.kind === "replace") && (
+                                    <section
+                                        aria-label={accountsCopy.authorizeTitle}
+                                        className="space-y-4 border-t border-stone-200 pt-5 dark:border-stone-700"
                                     >
-                                        <option value="browser">{sharingCopy.browserMethod}</option>
-                                        <option value="vscode">{sharingCopy.runnerMethod}</option>
-                                    </select>
-                                </label>
-                                {method === "vscode" && (
-                                    <p className="text-sm text-stone-600 dark:text-stone-400">
-                                        {sharingCopy.runnerMethodHint}
-                                    </p>
+                                        {editor.kind === "add" ? (
+                                            <div className="grid gap-2 text-sm font-medium">
+                                                <label htmlFor="shared-account-name">{accountsCopy.name}</label>
+                                                <input
+                                                    id="shared-account-name"
+                                                    value={editor.name}
+                                                    disabled={command !== null}
+                                                    onChange={(event) =>
+                                                        actions.setAccountName(event.currentTarget.value)
+                                                    }
+                                                    maxLength={36}
+                                                    autoComplete="off"
+                                                    aria-describedby="account-name-hint"
+                                                    className="min-h-11 rounded-lg border border-stone-300 bg-white px-3 text-stone-900 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-100"
+                                                />
+                                                <span
+                                                    id="account-name-hint"
+                                                    className="text-sm font-normal text-stone-600 dark:text-stone-400"
+                                                >
+                                                    {accountsCopy.nameHint}
+                                                </span>
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm">
+                                                {accountsCopy.replaceHint(sharedAccountLabel(editor.account))}
+                                            </p>
+                                        )}
+                                        <p className="text-sm">{sharingCopy.intro}</p>
+                                        <p className="text-sm text-stone-600 dark:text-stone-400">
+                                            {accountsCopy.writeAccess}
+                                        </p>
+                                        <Notice tone="warning" title={sharingCopy.risksTitle}>
+                                            <ul className="list-disc space-y-1 pl-5">
+                                                {sharingCopy.risks.map((risk) => (
+                                                    <li key={risk}>{risk}</li>
+                                                ))}
+                                            </ul>
+                                        </Notice>
+                                        {!branchProtected && (
+                                            <Notice tone="warning" title={sharingCopy.unprotectedTitle}>
+                                                {sharingCopy.unprotectedBody}
+                                            </Notice>
+                                        )}
+                                        <label className="grid gap-2 text-sm font-medium">
+                                            {sharingCopy.method}
+                                            <select
+                                                value={method}
+                                                disabled={command !== null}
+                                                onChange={(event) => actions.selectMethod(event.currentTarget.value)}
+                                                className="min-h-11 rounded-lg border border-stone-300 bg-white px-3 text-stone-900 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-100"
+                                            >
+                                                <option value="browser">{sharingCopy.browserMethod}</option>
+                                                <option value="vscode">{sharingCopy.runnerMethod}</option>
+                                            </select>
+                                        </label>
+                                        {method === "vscode" && (
+                                            <p className="text-sm text-stone-600 dark:text-stone-400">
+                                                {sharingCopy.runnerMethodHint}
+                                            </p>
+                                        )}
+                                        <Button busy={command === "start"} onClick={actions.start}>
+                                            {sharingCopy.start}
+                                        </Button>
+                                        <Button
+                                            variant="secondary"
+                                            disabled={command !== null}
+                                            onClick={actions.closeEditor}
+                                        >
+                                            {accountsCopy.back}
+                                        </Button>
+                                    </section>
                                 )}
-                                <Button busy={command === "start"} onClick={actions.start}>
-                                    {sharingCopy.start}
-                                </Button>
                             </>
                         );
                     case "starting":

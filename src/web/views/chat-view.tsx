@@ -10,18 +10,32 @@ import { ExternalLink } from "../components/ui/external-link.tsx";
 import { Announcer, Notice } from "../components/ui/notice.tsx";
 import type { SessionClient } from "../services/vault.ts";
 import type { ChatOutcome, ChatPhase, ChatStore } from "../view-models/chat-store.ts";
-import { blockingRunLabel, chatCopy, chatOutcomeText, commonCopy, errorMessage } from "../view-models/copy.ts";
+import {
+    accountsCopy,
+    blockingRunLabel,
+    chatCopy,
+    chatOutcomeText,
+    commonCopy,
+    errorMessage,
+    sessionAccountLabel,
+} from "../view-models/copy.ts";
+import { AccountsPicker } from "./accounts-view.tsx";
 
 /** The member's personal Claude session. */
 export function ChatView({
     store,
     repository,
     clock,
+    onShare,
 }: {
+    readonly onShare: () => void;
     readonly store: ChatStore;
     readonly repository: string;
     readonly clock: Clock;
 }) {
+    const accounts = useStore(store, (state) => state.accounts);
+    const selectedAccount = useStore(store, (state) => state.selectedAccount);
+    const runningAccount = useStore(store, (state) => state.runningAccount);
     const phase = useStore(store, (state) => state.phase);
     const command = useStore(store, (state) => state.command);
     const problem = useStore(store, (state) => state.problem);
@@ -42,6 +56,9 @@ export function ChatView({
                 </Notice>
             )}
             {commandError !== null && <Notice tone="error">{errorMessage(commandError)}</Notice>}
+            {"session" in phase && (
+                <p className="text-sm font-medium">{accountsCopy.using(sessionAccountLabel(runningAccount))}</p>
+            )}
             {(() => {
                 switch (phase.kind) {
                     case "loading":
@@ -63,42 +80,58 @@ export function ChatView({
                                 {phase.outcome !== null && <OutcomeNotice outcome={phase.outcome} />}
                                 <p className="text-sm">{chatCopy.intro}</p>
                                 {replacingHistory && <Notice tone="info">{chatCopy.replacingHistory}</Notice>}
-                                <ClientPicker
-                                    client={client}
+                                <AccountsPicker
+                                    catalog={accounts}
+                                    selected={selectedAccount}
                                     disabled={command !== null}
-                                    onSelect={actions.selectClient}
+                                    onSelect={actions.selectAccount}
+                                    onRetry={actions.refresh}
+                                    onShare={onShare}
                                 />
-                                <p className="text-sm text-stone-600 dark:text-stone-400">{chatCopy.clientHint}</p>
-                                {client === "morty" && (
-                                    <div className="space-y-1">
-                                        <label className="flex items-center gap-2 text-sm">
-                                            <input
-                                                type="checkbox"
-                                                checked={newMortyIdentity}
-                                                disabled={command !== null}
-                                                aria-describedby="new-morty-identity-hint"
-                                                onChange={(event) =>
-                                                    actions.setNewMortyIdentity(event.currentTarget.checked)
-                                                }
-                                                className="size-4 accent-emerald-700"
-                                            />
-                                            {chatCopy.newMortyIdentity}
-                                        </label>
-                                        <p
-                                            id="new-morty-identity-hint"
-                                            className="text-sm text-stone-600 dark:text-stone-400"
-                                        >
-                                            {chatCopy.newMortyIdentityHint}
+                                {accounts.kind === "ready" && accounts.items.length > 0 && (
+                                    <>
+                                        <ClientPicker
+                                            client={client}
+                                            disabled={command !== null}
+                                            onSelect={actions.selectClient}
+                                        />
+                                        <p className="text-sm text-stone-600 dark:text-stone-400">
+                                            {chatCopy.clientHint}
                                         </p>
-                                    </div>
+                                        {client === "morty" && (
+                                            <div className="space-y-1">
+                                                <label className="flex items-center gap-2 text-sm">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={newMortyIdentity}
+                                                        disabled={command !== null}
+                                                        aria-describedby="new-morty-identity-hint"
+                                                        onChange={(event) =>
+                                                            actions.setNewMortyIdentity(event.currentTarget.checked)
+                                                        }
+                                                        className="size-4 accent-emerald-700"
+                                                    />
+                                                    {chatCopy.newMortyIdentity}
+                                                </label>
+                                                <p
+                                                    id="new-morty-identity-hint"
+                                                    className="text-sm text-stone-600 dark:text-stone-400"
+                                                >
+                                                    {chatCopy.newMortyIdentityHint}
+                                                </p>
+                                            </div>
+                                        )}
+                                        <Button
+                                            busy={command === "start"}
+                                            disabled={
+                                                selectedAccount === null || (command !== null && command !== "start")
+                                            }
+                                            onClick={actions.start}
+                                        >
+                                            {chatCopy.start}
+                                        </Button>
+                                    </>
                                 )}
-                                <Button
-                                    busy={command === "start"}
-                                    disabled={command !== null && command !== "start"}
-                                    onClick={actions.start}
-                                >
-                                    {chatCopy.start}
-                                </Button>
                             </>
                         );
                     case "busy":

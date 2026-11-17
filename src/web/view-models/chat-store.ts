@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import { createStore } from "zustand/vanilla";
+import { accountName, LEGACY_ACCOUNT } from "../../shared/accounts.ts";
 import type { SessionChannel } from "../../shared/channel.ts";
 import { AppError, type ErrorCode } from "../../shared/errors.ts";
 import type { WorkflowRun } from "../../shared/github/client.ts";
@@ -15,6 +16,7 @@ import {
     vscodeUrl,
 } from "../../shared/protocol.ts";
 import { type PendingSession, type SessionClient, sessionClientSchema } from "../services/vault.ts";
+import { type AccountCatalog, readAccounts } from "./account-catalog.ts";
 import {
     abandonSession,
     beginSession,
@@ -63,6 +65,9 @@ export type ChatPhase =
 export type ChatCommand = "start" | "stop" | "force_stop" | "cancel_run" | "replace_history" | "choose_client" | null;
 
 export interface ChatState {
+    readonly accounts: AccountCatalog;
+    readonly selectedAccount: string | null;
+    readonly runningAccount: string;
     readonly phase: ChatPhase;
     readonly command: ChatCommand;
     /** The last refresh failed; the phase is the last confirmed one. */
@@ -80,6 +85,7 @@ export interface ChatActions {
     readonly open: () => void;
     readonly close: () => void;
     readonly start: () => void;
+    readonly selectAccount: (id: string) => void;
     readonly selectClient: (client: string) => void;
     readonly setNewMortyIdentity: (selected: boolean) => void;
     readonly stop: () => void;
@@ -214,16 +220,36 @@ export function createChatStore(member: MemberContext) {
                 default:
                     return phase satisfies never;
             }
+            if (next.kind === "idle" || next.kind === "busy") {
+                const accounts = await readAccounts(member, signal);
+                const selected = get().selectedAccount;
+                const previous = get().accounts;
+                const initiallyEmpty =
+                    previous.kind === "loading" || (previous.kind === "ready" && previous.items.length === 0);
+                set({
+                    accounts,
+                    selectedAccount:
+                        accounts.kind === "ready"
+                            ? accounts.items.some((account) => account.id === selected)
+                                ? selected
+                                : initiallyEmpty && accounts.items.length === 1
+                                  ? (accounts.items[0]?.id ?? null)
+                                  : null
+                            : selected,
+                });
+            }
+            if ("session" in next) {
+                set({ runningAccount: await member.vault.loadSessionAccount(next.session, signal) });
+            }
             const history = await member.vault.history(member.repository.name, member.user.id, signal);
             const client = await member.vault.loadSessionClient(member.repository.name, member.user.id, signal);
             set({ phase: next, problem: null, replacingHistory: history.mode === "replace", client });
         };
 
         const idleOrBusy = async (outcome: ChatOutcome | null, signal: AbortSignal): Promise<ChatPhase> => {
-            const runs = (await member.github.activeSessions(member.repository.name, member.user, signal)).filter(
-                (run) => run.id !== ending,
-            );
-            if (runs.length === 0) {
+            const active = await member.github.activeSessions(member.repository.name, member.user, signal);
+            const runs = active.filter((run) => run.id !== ending);
+            if (!active.some((run) => run.id === ending)) {
                 ending = null;
             }
             return runs.length === 0 ? { kind: "idle", outcome } : { kind: "busy", runs };
@@ -242,6 +268,20 @@ export function createChatStore(member: MemberContext) {
         const command = workflow.command;
 
         return {
+            accounts: { kind: "loading" },
+            selectedAccount: null,
+            runningAccount: LEGACY_ACCOUNT,
+            selectAccount: (id) => {
+                const state = get();
+                if (
+                    state.phase.kind === "idle" &&
+                    state.command === null &&
+                    state.accounts.kind === "ready" &&
+                    state.accounts.items.some((account) => account.id === id)
+                ) {
+                    set({ selectedAccount: id });
+                }
+            },
             phase: { kind: "loading" },
             command: null,
             problem: null,
@@ -278,15 +318,38 @@ export function createChatStore(member: MemberContext) {
                     if (phase.kind !== "idle") {
                         return;
                     }
-                    if ((await member.github.activeSessions(member.repository.name, member.user, signal)).length > 0) {
+                    if (
+                        (await member.github.activeSessions(member.repository.name, member.user, signal)).some(
+                            (run) => run.id !== ending,
+                        )
+                    ) {
                         throw new AppError("session_busy");
                     }
+                    const account = get().selectedAccount;
+                    const fresh = await readAccounts(member, signal);
+                    set({ accounts: fresh });
+                    if (fresh.kind === "failed") {
+                        throw new AppError(fresh.code);
+                    }
+                    if (
+                        fresh.kind !== "ready" ||
+                        !fresh.items.some((item) => item.id === account) ||
+                        account === null
+                    ) {
+                        set({ selectedAccount: null });
+                        throw new AppError("shared_account_missing");
+                    }
+                    accountName(account);
                     const newMortyIdentity = get().newMortyIdentity;
                     const access = get().client === "morty" ? "morty" : "vscode";
                     set({ phase: { kind: "starting" } });
                     try {
-                        const session = await beginSession(member, "chat", signal, { newMortyIdentity, access });
-                        set({ phase: { kind: "queued", session }, newMortyIdentity: false });
+                        const session = await beginSession(member, "chat", signal, {
+                            newMortyIdentity,
+                            access,
+                            account,
+                        });
+                        set({ phase: { kind: "queued", session }, newMortyIdentity: false, runningAccount: account });
                     } catch (cause) {
                         set({ phase });
                         throw cause;

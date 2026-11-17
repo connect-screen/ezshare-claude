@@ -45,7 +45,7 @@ export async function startFakeActions(
             | "relay-transient"
             | "relay-unavailable";
         readonly mortyHandoff?: "legacy" | "encrypted" | "conflicting";
-        readonly sharedToken: () => string | null;
+        readonly sharedToken: (account?: string) => string | null;
     },
 ) {
     const root = await mkdtemp(join(tmpdir(), "ezshare-actions-"));
@@ -106,7 +106,7 @@ export async function startFakeActions(
         }
         const token = `ghs_run_${run.id}`;
         github.grant(token, { user: ACTIONS_BOT, secrets: false, actions: false });
-        const shared = options.sharedToken();
+        const shared = options.sharedToken(run.inputs["account"]);
         const environment = {
             GITHUB_EVENT_NAME: "workflow_dispatch",
             GITHUB_EVENT_PATH: eventPath,
@@ -143,10 +143,21 @@ export async function startFakeActions(
         }
     };
 
+    const runningUsers = new Set<number>();
     const start = (run: FakeRun) => {
         if (run.status === "completed") {
             return;
         }
+        if (jobs.has(run.id)) {
+            return;
+        }
+        if (runningUsers.has(run.actor.id)) {
+            if (!queued.includes(run)) {
+                queued.push(run);
+            }
+            return;
+        }
+        runningUsers.add(run.actor.id);
         const agentHome = join(root, `agent-${run.actor.id}`);
         const diagnostics: DiagnosticRecord[] = [];
         const job: Job = {
@@ -154,21 +165,36 @@ export async function startFakeActions(
             agentHome,
             diagnostics,
             error: null,
-            done: execute(run, { agentHome, diagnostics }).then(
-                () => {
-                    if (run.status !== "completed") {
-                        run.status = "completed";
-                        run.conclusion = "success";
+            done: execute(run, { agentHome, diagnostics })
+                .then(
+                    () => {
+                        if (run.status !== "completed") {
+                            run.status = "completed";
+                            run.conclusion = "success";
+                        }
+                    },
+                    (cause: unknown) => {
+                        job.error = toAppError(cause).code;
+                        if (run.status !== "completed") {
+                            run.status = "completed";
+                            run.conclusion = "failure";
+                        }
+                    },
+                )
+                .finally(() => {
+                    runningUsers.delete(run.actor.id);
+                    if (!hold) {
+                        const next = queued.findIndex(
+                            (candidate) => candidate.actor.id === run.actor.id && candidate.status !== "completed",
+                        );
+                        if (next >= 0) {
+                            const candidate = queued.splice(next, 1)[0];
+                            if (candidate !== undefined) {
+                                start(candidate);
+                            }
+                        }
                     }
-                },
-                (cause: unknown) => {
-                    job.error = toAppError(cause).code;
-                    if (run.status !== "completed") {
-                        run.status = "completed";
-                        run.conclusion = "failure";
-                    }
-                },
-            ),
+                }),
         };
         jobs.set(run.id, job);
     };
@@ -235,6 +261,7 @@ export async function startFakeActions(
                 );
         },
         close: async () => {
+            hold = true;
             for (const job of jobs.values()) {
                 job.run.cancel.abort(new DOMException("Test finished", "AbortError"));
             }

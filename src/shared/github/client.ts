@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { accountFromSecret, accountSecret, type SharedAccount } from "../accounts.ts";
 import { AppError } from "../errors.ts";
 import { type DispatchInputs, type Purpose, runNamePrefix, workflowPath } from "../protocol.ts";
 import { GitHubHttp } from "./http.ts";
@@ -354,6 +355,57 @@ export class GitHubClient {
             signal,
             "issues_write_forbidden",
         );
+    };
+
+    /** Lists metadata only. GitHub never returns credential values from this endpoint. */
+    readonly sharedAccounts = async (repository: string, signal: AbortSignal): Promise<readonly SharedAccount[]> => {
+        const name = repositoryName(repository);
+        const accounts: SharedAccount[] = [];
+        const schema = v.object({
+            secrets: v.pipe(
+                v.array(
+                    v.object({
+                        name: v.pipe(v.string(), v.maxLength(100)),
+                        updated_at: v.pipe(v.string(), v.isoTimestamp()),
+                    }),
+                ),
+                v.maxLength(PAGE_SIZE),
+            ),
+        });
+        for (let page = 1; page <= MAX_PAGES; page++) {
+            const batch = decode(
+                schema,
+                await this.#http.get(
+                    `/repos/${name}/actions/secrets?per_page=${PAGE_SIZE}&page=${page}`,
+                    signal,
+                    "secrets_read_forbidden",
+                ),
+            );
+            for (const secret of batch.secrets) {
+                const account = accountFromSecret(secret.name, secret.updated_at);
+                if (account !== null) {
+                    accounts.push(account);
+                }
+            }
+            if (batch.secrets.length < PAGE_SIZE) {
+                return accounts.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "") || a.id.localeCompare(b.id));
+            }
+        }
+        throw new AppError("invalid_response");
+    };
+
+    readonly removeSharedAccount = async (repository: string, id: string, signal: AbortSignal): Promise<void> => {
+        try {
+            await this.#http.delete(
+                `/repos/${repositoryName(repository)}/actions/secrets/${accountSecret(id)}`,
+                signal,
+                "secrets_write_forbidden",
+            );
+        } catch (cause) {
+            if (!(cause instanceof AppError && cause.code === "not_found")) {
+                throw cause;
+            }
+        }
     };
 
     readonly secretPublicKey = async (repository: string, signal: AbortSignal) => {

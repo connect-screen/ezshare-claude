@@ -28,7 +28,7 @@ export function apiOrigin(value: string): string {
     return url.origin;
 }
 
-type Method = "GET" | "POST" | "PUT" | "PATCH";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /**
  * GitHub REST transport. Reads are conditional on the last ETag so unchanged polls are answered with 304,
@@ -64,6 +64,9 @@ export class GitHubHttp {
         signal: AbortSignal,
         denial: AccessDeniedCode,
     ): Promise<unknown> => this.#request("PUT", path, body, signal, denial);
+
+    readonly delete = (path: string, signal: AbortSignal, denial: AccessDeniedCode): Promise<unknown> =>
+        this.#request("DELETE", path, undefined, signal, denial);
 
     readonly patch = (
         path: string,
@@ -108,6 +111,8 @@ export class GitHubHttp {
                     return cached.value;
                 }
                 if (!response.ok) {
+                    // A failed validation must be followed by a fresh response, not another conditional cache lookup.
+                    this.#validators.delete(url);
                     await response.body?.cancel();
                     throw failure(response, denial);
                 }
