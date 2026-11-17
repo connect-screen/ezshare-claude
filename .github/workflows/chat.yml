@@ -49,81 +49,10 @@ concurrency:
 
 jobs:
   session:
-    # Only the default branch's code may serve a session, and only on its first attempt: a re-run could be
-    # started by another member. The step verifies both again against the API.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.run_attempt == 1
-    runs-on: ubuntu-24.04
-    # The four-hour session lifetime plus setup, history restore and the final save.
-    timeout-minutes: 260
-    env:
-      EZSHARE_AGENT_USER: ezshare-agent
-      EZSHARE_AGENT_HOME: /home/ezshare-agent
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-      - name: Install runner dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile --prod
-      - name: Install the agent tools from their lockfile
-        run: |
-          sudo install -d -o "$USER" -m 0755 /opt/ezshare-tools
-          cp tools/package.json tools/package-lock.json /opt/ezshare-tools/
-          npm ci --prefix /opt/ezshare-tools --no-audit --no-fund
-          echo "/opt/ezshare-tools/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: Install the VS Code CLI
-        if: inputs.access == 'vscode'
-        run: |
-          # The official CLI seals file credentials with the OS hostname; ephemeral runner names cannot restore them.
-          sudo hostname ezshare-agent
-          curl --fail --location --retry 3 --max-time 180 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' --output "$RUNNER_TEMP/vscode-cli.tar.gz"
-          mkdir "$RUNNER_TEMP/vscode-cli"
-          tar -xf "$RUNNER_TEMP/vscode-cli.tar.gz" -C "$RUNNER_TEMP/vscode-cli" code
-          sudo install -d -m 0755 /opt/ezshare-vscode
-          sudo install -m 0755 "$RUNNER_TEMP/vscode-cli/code" /opt/ezshare-vscode/code
-          echo "/opt/ezshare-vscode" >> "$GITHUB_PATH"
-      - name: Create the unprivileged agent account
-        # Claude and Morty run here, unable to read this job's token, channel key or other processes. The home is
-        # created empty: the runner image's /etc/skel holds about 800 MB of toolchains, and copying it took up to
-        # a minute and a half of every start.
-        run: |
-          sudo useradd --no-create-home --home-dir "$EZSHARE_AGENT_HOME" --shell /bin/bash "$EZSHARE_AGENT_USER"
-          sudo install -d -o "$EZSHARE_AGENT_USER" -g "$EZSHARE_AGENT_USER" -m 0700 "$EZSHARE_AGENT_HOME"
-          sudo -u "$EZSHARE_AGENT_USER" mkdir "$EZSHARE_AGENT_HOME/workspace"
-      - name: Create the session channel key
-        id: channel
-        run: node src/runner/main.ts prepare
-      - name: Publish the channel key
-        # Only this run can add artifacts to itself, which is what lets the browser trust the key.
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ steps.channel.outputs.artifact-name }}
-          path: ${{ steps.channel.outputs.artifact-path }}
-          retention-days: 1
-          if-no-files-found: error
-      - name: Restore the member's encrypted history
-        # Caches are readable by every run on the default branch; only the member's browser holds the key that
-        # opens this archive. The trailing "-run-" keeps one member's prefix from matching another member's id.
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/ezshare-history
-          key: ezshare-history-${{ github.actor_id }}-run-${{ github.run_id }}
-          restore-keys: ezshare-history-${{ github.actor_id }}-run-
-      - name: Serve the session
-        id: serve
-        run: node src/runner/main.ts chat
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EZSHARE_CLAUDE_TOKEN: ${{ (inputs.account == '' || inputs.account == 'legacy') && secrets.EZSHARE_CLAUDE_TOKEN || secrets[format('EZSHARE_CLAUDE_ACCOUNT_{0}', inputs.account)] }}
-      - name: Save the member's encrypted history
-        # Only when the session archived a history it was allowed to replace: an archive this browser could not
-        # read is never overwritten unless the member chose to.
-        if: always() && steps.serve.outputs.history == 'archived'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/ezshare-history
-          key: ezshare-history-${{ github.actor_id }}-run-${{ github.run_id }}
+    uses: ./.github/workflows/claude-session.yml
+    with:
+      access: ${{ inputs.access || 'morty' }}
+    secrets:
+      # Resolve the account on GitHub, before allocating a runner. The worker declares exactly one credential;
+      # never use secrets: inherit here. zizmor cannot distinguish this server-side mapping from a runner env.
+      claude_token: ${{ (inputs.account == '' || inputs.account == 'legacy') && secrets.EZSHARE_CLAUDE_TOKEN || secrets[format('EZSHARE_CLAUDE_ACCOUNT_{0}', inputs.account)] }} # zizmor: ignore[overprovisioned-secrets]
