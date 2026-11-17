@@ -17,6 +17,15 @@ on:
         type: string
         required: true
 
+      login_access:
+        description: Where the owner authorizes Claude
+        type: choice
+        options:
+          - browser
+          - vscode
+        default: browser
+        required: false
+
 permissions:
   contents: read
   actions: read
@@ -54,6 +63,17 @@ jobs:
           cp tools/package.json tools/package-lock.json /opt/ezshare-tools/
           npm ci --prefix /opt/ezshare-tools --no-audit --no-fund
           echo "/opt/ezshare-tools/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Install the VS Code CLI
+        if: inputs.login_access == 'vscode'
+        run: |
+          # The official CLI seals file credentials with the OS hostname; ephemeral runner names cannot restore them.
+          sudo hostname ezshare-agent
+          curl --fail --location --retry 3 --max-time 180 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' --output "$RUNNER_TEMP/vscode-cli.tar.gz"
+          mkdir "$RUNNER_TEMP/vscode-cli"
+          tar -xf "$RUNNER_TEMP/vscode-cli.tar.gz" -C "$RUNNER_TEMP/vscode-cli" code
+          sudo install -d -m 0755 /opt/ezshare-vscode
+          sudo install -m 0755 "$RUNNER_TEMP/vscode-cli/code" /opt/ezshare-vscode/code
+          echo "/opt/ezshare-vscode" >> "$GITHUB_PATH"
       - name: Create the unprivileged agent account
         # Claude and Morty run here, unable to read this job's token, channel key or other processes. The home is
         # created empty: the runner image's /etc/skel holds about 800 MB of toolchains, and copying it took up to
