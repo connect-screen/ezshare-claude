@@ -31,6 +31,7 @@ export type ErrorCode =
     | "shared_account_missing"
     | "agent_failed"
     | "morty_unavailable"
+    | "vscode_unavailable"
     | "provider_failed"
     | "expired"
     | "unexpected";
