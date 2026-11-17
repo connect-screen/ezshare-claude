@@ -23,7 +23,7 @@ export class VscodeSession {
     readonly #claudeVariables: Readonly<Record<string, string>>;
     readonly #diagnostics: Diagnostics;
     readonly #name: string;
-    #process: ReturnType<typeof startProcess> | null = null;
+    #process: TunnelProcess | null = null;
     #progress: Progress = { kind: "starting" };
 
     constructor(context: ActionsContext, path: string, token: string, clock: Clock, diagnostics: Diagnostics) {
@@ -208,19 +208,31 @@ export class VscodeSession {
     };
 
     private readonly removeLegacyTerminalProfile = async (signal: AbortSignal): Promise<void> => {
-        const script = [
-            'const fs = require("node:fs"); const path = require("node:path");',
-            'const file = path.join(process.argv[1], ".vscode", "settings.json");',
-            'let settings; try { settings = JSON.parse(fs.readFileSync(file,"utf8")); } catch { process.exit(0); }',
-            'if(settings===null || Array.isArray(settings) || typeof settings!=="object") process.exit(0);',
-            'const profiles = settings["terminal.integrated.profiles.linux"];',
-            'const profile = profiles?.["Ezshare Claude"];',
-            'if(profile===null || typeof profile!=="object" || !Array.isArray(profile.args) || profile.args.length!==1 || profile.args[0]!=="--continue" || typeof profile.path!=="string" || !profile.path.endsWith("/claude")) process.exit(0);',
-            'delete profiles["Ezshare Claude"];',
-            'if(Object.keys(profiles).length===0) delete settings["terminal.integrated.profiles.linux"];',
-            'if(settings["terminal.integrated.defaultProfile.linux"]==="Ezshare Claude") delete settings["terminal.integrated.defaultProfile.linux"];',
-            'if(Object.keys(settings).length===0) fs.unlinkSync(file); else fs.writeFileSync(file, JSON.stringify(settings,null,2)+"\\n");',
-        ].join("\n");
+        const script = String.raw`
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const file = path.join(process.argv[1], ".vscode", "settings.json");
+            let settings;
+            try {
+                settings = JSON.parse(fs.readFileSync(file, "utf8"));
+            } catch {
+                // Leave missing files and user-authored JSONC untouched.
+                process.exit(0);
+            }
+            if (settings === null || Array.isArray(settings) || typeof settings !== "object") process.exit(0);
+            const profiles = settings["terminal.integrated.profiles.linux"];
+            const profile = profiles?.["Ezshare Claude"];
+            if (profile === null || typeof profile !== "object" ||
+                !Array.isArray(profile.args) || profile.args.length !== 1 || profile.args[0] !== "--continue" ||
+                typeof profile.path !== "string" || !profile.path.endsWith("/claude")) process.exit(0);
+            delete profiles["Ezshare Claude"];
+            if (Object.keys(profiles).length === 0) delete settings["terminal.integrated.profiles.linux"];
+            if (settings["terminal.integrated.defaultProfile.linux"] === "Ezshare Claude") {
+                delete settings["terminal.integrated.defaultProfile.linux"];
+            }
+            if (Object.keys(settings).length === 0) fs.unlinkSync(file);
+            else fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+        `;
         await runAgentCommand(
             await agentCommand(
                 this.#context.agent,
@@ -239,7 +251,12 @@ type ProcessStatus =
     | { readonly kind: "running" }
     | { readonly kind: "exited"; readonly code: number | null; readonly cause: unknown };
 
-function startProcess(command: AgentCommand, onLine: (line: string) => void) {
+interface TunnelProcess {
+    readonly status: () => ProcessStatus;
+    readonly stop: () => Promise<void>;
+}
+
+function startProcess(command: AgentCommand, onLine: (line: string) => void): TunnelProcess {
     const child = spawn(command.command, [...command.args], { cwd: "/", env: command.env, stdio: "pipe" });
     child.stdin.end();
     let status: ProcessStatus = { kind: "running" };
