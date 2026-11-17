@@ -121,7 +121,12 @@ function Connected({
                 ))}
             </nav>
             <div hidden={page !== "use"}>
-                <ChatView store={workspace.chat} repository={workspace.repository.name} clock={clock} />
+                <ChatView
+                    onShare={() => actions.showPage("share")}
+                    store={workspace.chat}
+                    repository={workspace.repository.name}
+                    clock={clock}
+                />
             </div>
             <div hidden={page !== "share"}>
                 <SharingView store={workspace.sharing} branchProtected={workspace.branchProtected} />
@@ -149,10 +154,22 @@ function TokenAccessNotice({
     readonly onReplace: () => void;
 }) {
     const chatDenied = useStore(workspace.chat, (state) =>
-        isAccessDenied(state.commandError) ? state.commandError : isAccessDenied(state.problem) ? state.problem : null,
+        isAccessDenied(state.commandError)
+            ? state.commandError
+            : isAccessDenied(state.problem)
+              ? state.problem
+              : state.accounts.kind === "failed" && isAccessDenied(state.accounts.code)
+                ? state.accounts.code
+                : null,
     );
     const sharingDenied = useStore(workspace.sharing, (state) =>
-        isAccessDenied(state.commandError) ? state.commandError : isAccessDenied(state.problem) ? state.problem : null,
+        isAccessDenied(state.commandError)
+            ? state.commandError
+            : isAccessDenied(state.problem)
+              ? state.problem
+              : state.accounts.kind === "failed" && isAccessDenied(state.accounts.code)
+                ? state.accounts.code
+                : null,
     );
     const templates = tokenTemplates(workspace.repository.name);
     if ((!chatDenied && !sharingDenied) || templates === null) {

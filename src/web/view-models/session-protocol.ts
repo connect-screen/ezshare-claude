@@ -39,6 +39,7 @@ export async function beginSession(
         readonly newMortyIdentity?: boolean;
         readonly access?: SessionAccess;
         readonly loginAccess?: LoginAccess;
+        readonly account?: string;
     } = {},
 ): Promise<PendingSession> {
     const key = await createChannelKey();
@@ -58,12 +59,18 @@ export async function beginSession(
         startedAt: member.clock.now(),
         key,
     };
+    if (options.account !== undefined) {
+        await member.vault.saveSessionAccount(session, options.account, signal);
+    }
     await member.vault.savePending(session, signal);
     try {
         await member.github.dispatch(
             member.repository,
             purpose,
             {
+                ...(purpose === "chat" && options.account !== undefined && options.account !== "legacy"
+                    ? { account: options.account }
+                    : {}),
                 request_id: requestId,
                 issue: String(issue),
                 client_key: key.publicKey,

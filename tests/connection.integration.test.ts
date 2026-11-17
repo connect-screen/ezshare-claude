@@ -70,7 +70,7 @@ test("Given a fork configured with its own execution repository, When a member o
 
 test("Given a token that can identify a member but cannot dispatch workflows, When starting a session is denied, Then a persistent connection warning offers token replacement", async () => {
     app = await createTestApp();
-    app.github.grant(tokens.alice, { user: alice, secrets: false, actions: false });
+    app.github.grant(tokens.alice, { user: alice, secrets: false, secretsRead: true, actions: false });
     const body = document.body;
     await connect(app, tokens.alice);
     await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Start a session" })));
@@ -78,7 +78,7 @@ test("Given a token that can identify a member but cannot dispatch workflows, Wh
     expect(warning.textContent).toContain("Actions and Issues");
     expect(getByRole(body, "alert").textContent).toContain("Actions: Read and write");
     expect(warning.textContent).toContain(REPOSITORY);
-    await app.user.click(getByRole(body, "button", { name: "Share your account" }));
+    await app.user.click(getByRole(body, "button", { name: "Manage shared accounts" }));
     expect(getByRole(body, "region", { name: "GitHub access needs attention" })).toBeTruthy();
     await app.user.click(within(warning).getByRole("button", { name: "Replace GitHub token" }));
     await app.eventually(() => getByLabelText(body, "GitHub token"));
@@ -102,6 +102,6 @@ test("Given a member connecting to a repository, When choosing how to use Claude
         expect(url.searchParams.get("actions")).toBe("write");
         expect(url.searchParams.get("issues")).toBe("write");
     }
-    expect(member.searchParams.has("secrets")).toBe(false);
+    expect(member.searchParams.get("secrets")).toBe("read");
     expect(sharing.searchParams.get("secrets")).toBe("write");
 });

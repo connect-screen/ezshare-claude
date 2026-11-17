@@ -20,6 +20,7 @@ export interface TokenGrant {
     readonly user: FakeUser;
     readonly secrets: boolean;
     readonly secretWrite?: boolean;
+    readonly secretsRead?: boolean;
     readonly actions: boolean;
 }
 
@@ -63,9 +64,11 @@ export async function startFakeGitHub(options: {
     const runs: FakeRun[] = [];
     const issues: FakeIssue[] = [];
     const secrets = new Map<string, string>();
+    const secretDates = new Map<string, string>();
     const dispatchListeners: ((run: FakeRun) => void)[] = [];
     let nextId = 7000;
     let available = true;
+    let secretsAvailable = true;
 
     const respond = (request: IncomingMessage, response: ServerResponse, status: number, value?: unknown) => {
         const body = value === undefined ? "" : JSON.stringify(value);
@@ -103,7 +106,7 @@ export async function startFakeGitHub(options: {
 
     const server = createServer(async (request, response) => {
         response.setHeader("access-control-allow-origin", "*");
-        response.setHeader("access-control-allow-methods", "GET, POST, PUT, PATCH");
+        response.setHeader("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE");
         response.setHeader(
             "access-control-allow-headers",
             "authorization, accept, content-type, if-none-match, x-github-api-version",
@@ -147,7 +150,7 @@ export async function startFakeGitHub(options: {
         const dispatchPath = segment(/^\/actions\/workflows\/([a-z]+\.yml)\/dispatches$/u, "POST");
         const issuePath = segment(/^\/issues\/(\d+)$/u);
         const commentsPath = segment(/^\/issues\/(\d+)\/comments$/u);
-        const secretPath = segment(/^\/actions\/secrets\/([A-Z_]+)$/u, "PUT");
+        const secretPath = segment(/^\/actions\/secrets\/([A-Z0-9_]+)$/u);
         if (rest === "") {
             respond(request, response, 200, {
                 full_name: options.repository,
@@ -266,24 +269,53 @@ export async function startFakeGitHub(options: {
                     user: { id: comment.user.id, type: comment.user.type },
                 })),
             );
+        } else if (rest === "/actions/secrets") {
+            if (!secretsAvailable) {
+                respond(request, response, 503, {});
+                return;
+            }
+            if (!(grant.secretsRead ?? grant.secrets)) {
+                respond(request, response, 403, {});
+                return;
+            }
+            const page = Number(url.searchParams.get("page") ?? 1);
+            const perPage = Number(url.searchParams.get("per_page") ?? 30);
+            const list = [...secrets.keys()].sort().map((name) => ({
+                name,
+                created_at: secretDates.get(name) ?? "2026-11-17T08:00:00Z",
+                updated_at: secretDates.get(name) ?? "2026-11-17T08:00:00Z",
+            }));
+            respond(request, response, 200, {
+                total_count: list.length,
+                secrets: list.slice((page - 1) * perPage, page * perPage),
+            });
         } else if (rest === "/actions/secrets/public-key") {
             respond(
                 request,
                 response,
-                grant.secrets ? 200 : 403,
-                grant.secrets
+                (grant.secretsRead ?? grant.secrets) ? 200 : 403,
+                (grant.secretsRead ?? grant.secrets)
                     ? {
                           key_id: "fake-key-1",
                           key: sodium.to_base64(secretKeys.publicKey, sodium.base64_variants.ORIGINAL),
                       }
                     : {},
             );
-        } else if (secretPath !== undefined) {
+        } else if (secretPath !== undefined && request.method === "DELETE") {
+            if (!grant.secrets || grant.secretWrite === false) {
+                respond(request, response, 403, {});
+                return;
+            }
+            const existed = secrets.delete(secretPath);
+            secretDates.delete(secretPath);
+            respond(request, response, existed ? 204 : 404);
+        } else if (secretPath !== undefined && request.method === "PUT") {
             if (!grant.secrets || grant.secretWrite === false || field("key_id") !== "fake-key-1") {
                 respond(request, response, 403, {});
                 return;
             }
             secrets.set(secretPath, String(field("encrypted_value")));
+            secretDates.set(secretPath, "2026-11-17T09:00:00Z");
             respond(request, response, 201);
         } else {
             respond(request, response, 404, { message: `No fake for ${request.method} ${path}` });
@@ -298,14 +330,33 @@ export async function startFakeGitHub(options: {
 
     return {
         origin: `http://127.0.0.1:${address.port}`,
+        setSecret: (name: string, value: string | null) => {
+            if (value === null) {
+                secrets.delete(name);
+                secretDates.delete(name);
+                return;
+            }
+            secrets.set(
+                name,
+                sodium.to_base64(
+                    sodium.crypto_box_seal(sodium.from_string(value), secretKeys.publicKey),
+                    sodium.base64_variants.ORIGINAL,
+                ),
+            );
+            secretDates.set(name, "2026-11-17T08:00:00Z");
+        },
         runs,
         issues,
         grant: (token: string, grant: TokenGrant) => tokens.set(token, grant),
         revoke: (token: string) => tokens.delete(token),
+        setSecretsAvailable: (value: boolean) => {
+            secretsAvailable = value;
+        },
         setAvailable: (value: boolean) => {
             available = value;
         },
         onDispatch: (listener: (run: FakeRun) => void) => dispatchListeners.push(listener),
+        secretNames: () => [...secrets.keys()],
         /** Decrypts a stored repository secret the way GitHub Actions would. */
         secret: (name: string): string | null => {
             const sealed = secrets.get(name);

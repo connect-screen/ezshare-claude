@@ -1,5 +1,6 @@
 import { waitFor } from "@testing-library/dom";
 import { userEvent } from "@testing-library/user-event";
+import { accountSecret, LEGACY_ACCOUNT, LEGACY_SECRET } from "../../src/shared/accounts.ts";
 import { mountLauncher } from "../../src/web/mount.tsx";
 import { startFakeActions } from "./fake-actions.ts";
 import { type FakeUser, startFakeGitHub, type TokenGrant } from "./fake-github.ts";
@@ -52,19 +53,20 @@ export async function createTestApp(
         ...(options.branchProtected === undefined ? {} : { branchProtected: options.branchProtected }),
     });
     const grants: Record<keyof typeof tokens, TokenGrant> = {
-        alice: { user: alice, secrets: false, actions: true },
-        bob: { user: bob, secrets: false, actions: true },
+        alice: { user: alice, secrets: false, secretsRead: true, actions: true },
+        bob: { user: bob, secrets: false, secretsRead: true, actions: true },
         olivia: { user: olivia, secrets: true, actions: true },
     };
     for (const [name, token] of Object.entries(tokens)) {
         const grant = grants[name === "alice" ? "alice" : name === "bob" ? "bob" : "olivia"];
         github.grant(token, grant);
     }
-    let sharedToken = options.sharedToken === undefined ? SHARED_CLAUDE_TOKEN : options.sharedToken;
+    const sharedToken = options.sharedToken === undefined ? SHARED_CLAUDE_TOKEN : options.sharedToken;
+    github.setSecret(LEGACY_SECRET, sharedToken);
     const actions = await startFakeActions(github, {
         repository: REPOSITORY,
         clock,
-        sharedToken: () => sharedToken,
+        sharedToken: (account) => github.secret(accountSecret(account ?? LEGACY_ACCOUNT)),
         ...(options.mortyFailure === undefined ? {} : { mortyFailure: options.mortyFailure }),
         ...(options.mortyHandoff === undefined ? {} : { mortyHandoff: options.mortyHandoff }),
     });
@@ -90,7 +92,7 @@ export async function createTestApp(
         actions,
         user: userEvent.setup(),
         setSharedToken: (value: string | null) => {
-            sharedToken = value;
+            github.setSecret(LEGACY_SECRET, value);
         },
         /** Retries the assertion while moving the clock forward, so polls and runner waits progress. */
         eventually: <T>(assertion: () => T, step = 500): Promise<T> =>

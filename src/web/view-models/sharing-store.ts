@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import { createStore } from "zustand/vanilla";
+import { accountSecret, newAccountId, type SharedAccount } from "../../shared/accounts.ts";
 import { AppError, type ErrorCode } from "../../shared/errors.ts";
 import {
     authorizationCodeSchema,
@@ -10,12 +11,12 @@ import {
     loginAccessSchema,
     loginBrowserMessageSchema,
     loginRunnerMessageSchema,
-    SHARED_SECRET_NAME,
     vscodeDesktopUrl,
     vscodeUrl,
 } from "../../shared/protocol.ts";
 import { sealForGitHub } from "../services/secret-box.ts";
 import type { PendingSession } from "../services/vault.ts";
+import { type AccountCatalog, readAccounts } from "./account-catalog.ts";
 import {
     abandonSession,
     beginSession,
@@ -48,9 +49,18 @@ export type SharingPhase =
     | { readonly kind: "completing"; readonly session: PendingSession }
     | { readonly kind: "publishing"; readonly session: PendingSession };
 
-export type SharingCommand = "start" | "submit_code" | "cancel" | null;
+export type AccountEditor =
+    | { readonly kind: "closed" }
+    | { readonly kind: "add"; readonly name: string }
+    | { readonly kind: "replace"; readonly account: SharedAccount }
+    | { readonly kind: "remove"; readonly account: SharedAccount };
+
+export type SharingCommand = "start" | "submit_code" | "cancel" | "remove" | null;
 
 export interface SharingState {
+    readonly accounts: AccountCatalog;
+    readonly editor: AccountEditor;
+    readonly account: string;
     readonly phase: SharingPhase;
     readonly command: SharingCommand;
     readonly problem: ErrorCode | null;
@@ -59,6 +69,12 @@ export interface SharingState {
 }
 
 export interface SharingActions {
+    readonly refresh: () => void;
+    readonly addAccount: () => void;
+    readonly setAccountName: (name: string) => void;
+    readonly editAccount: (id: string, operation: "replace" | "remove") => void;
+    readonly closeEditor: () => void;
+    readonly removeAccount: () => void;
     readonly open: () => void;
     readonly close: () => void;
     /** Starts authorization; the owner has acknowledged what sharing gives every member. */
@@ -75,15 +91,19 @@ export type SharingStore = ReturnType<typeof createSharingStore>;
  * channel and immediately store it as the repository secret. The token is never kept in browser storage.
  */
 export function createSharingStore(member: MemberContext) {
+    // GitHub keeps a finished authorization run visible while its cleanup completes. Its successor queues behind it.
+    let ending: string | null = null;
     return createStore<SharingState & SharingActions>()((set, get) => {
         const publish = async (session: PendingSession, token: string, signal: AbortSignal): Promise<void> => {
             const key = await member.github.secretPublicKey(member.repository.name, signal);
             const sealed = await sealForGitHub(key.key, token, signal);
-            await member.github.putSecret(member.repository.name, SHARED_SECRET_NAME, key.keyId, sealed, signal);
+            const id = await member.vault.loadSessionAccount(session, signal);
+            await member.github.putSecret(member.repository.name, accountSecret(id), key.keyId, sealed, signal);
             await abandonSession(member, session);
         };
 
         const observe = async (session: PendingSession, signal: AbortSignal): Promise<SharingPhase> => {
+            set({ account: await member.vault.loadSessionAccount(session, signal) });
             if (sessionExpired(member, session)) {
                 await abandonSession(member, session);
                 return { kind: "intro", outcome: { kind: "failed", code: "expired" } };
@@ -100,6 +120,7 @@ export function createSharingStore(member: MemberContext) {
                 observation.channel === null ? [] : await observation.channel.receive(signal);
             const token = messages.find((message) => message.kind === "token");
             if (token !== undefined) {
+                ending = observation.kind === "running" ? observation.run.id : null;
                 set({ phase: { kind: "publishing", session } });
                 await publish(session, token.body.token, signal);
                 return { kind: "intro", outcome: { kind: "shared" } };
@@ -157,6 +178,8 @@ export function createSharingStore(member: MemberContext) {
                     break;
                 }
                 case "intro":
+                    set({ accounts: await readAccounts(member, signal) });
+                    return;
                 case "starting":
                     return;
                 case "waiting":
@@ -169,13 +192,14 @@ export function createSharingStore(member: MemberContext) {
                 default:
                     return phase satisfies never;
             }
-            set({ phase: next, problem: null });
+            const accounts = next.kind === "intro" ? await readAccounts(member, signal) : get().accounts;
+            set({ phase: next, accounts, problem: null });
         };
 
         const workflow = new StoreWorkflow<Exclude<SharingCommand, null>>({
             clock: member.clock,
             synchronize,
-            interval: () => POLL_MS,
+            interval: () => (get().phase.kind === "intro" ? 30_000 : POLL_MS),
             currentCommand: () => get().command,
             reportProblem: (problem) => set({ problem }),
             commandStarted: (command) => set({ command, commandError: null }),
@@ -185,6 +209,44 @@ export function createSharingStore(member: MemberContext) {
         const command = workflow.command;
 
         return {
+            accounts: { kind: "loading" },
+            editor: { kind: "closed" },
+            account: "legacy",
+            refresh: workflow.refresh,
+            addAccount: () => {
+                if (get().phase.kind === "intro" && get().command === null) {
+                    set({ editor: { kind: "add", name: "" } });
+                }
+            },
+            setAccountName: (name) => {
+                if (get().editor.kind === "add" && get().command === null) {
+                    set({ editor: { kind: "add", name } });
+                }
+            },
+            editAccount: (id, operation) => {
+                const state = get();
+                if (state.phase.kind !== "intro" || state.command !== null || state.accounts.kind !== "ready") {
+                    return;
+                }
+                const account = state.accounts.items.find((item) => item.id === id);
+                if (account !== undefined) {
+                    set({ editor: { kind: operation, account } });
+                }
+            },
+            closeEditor: () => {
+                if (get().command === null) {
+                    set({ editor: { kind: "closed" } });
+                }
+            },
+            removeAccount: () =>
+                command("remove", async (signal) => {
+                    const editor = get().editor;
+                    if (get().phase.kind !== "intro" || editor.kind !== "remove") {
+                        return;
+                    }
+                    await member.github.removeSharedAccount(member.repository.name, editor.account.id, signal);
+                    set({ editor: { kind: "closed" }, accounts: await readAccounts(member, signal) });
+                }),
             phase: { kind: "loading" },
             command: null,
             problem: null,
@@ -203,21 +265,47 @@ export function createSharingStore(member: MemberContext) {
                     if (phase.kind !== "intro") {
                         return;
                     }
-                    // Fail before any run starts if this token cannot write repository secrets.
+                    const editor = get().editor;
+                    if (editor.kind !== "add" && editor.kind !== "replace") {
+                        return;
+                    }
+                    const account = editor.kind === "replace" ? editor.account.id : newAccountId(editor.name);
+                    const accounts = await member.github.sharedAccounts(member.repository.name, signal);
+                    if (
+                        editor.kind === "add" &&
+                        accounts.some(
+                            (item) =>
+                                item.name?.toLocaleLowerCase() ===
+                                editor.name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase(),
+                        )
+                    ) {
+                        throw new AppError("account_name_taken");
+                    }
+                    if (editor.kind === "replace" && !accounts.some((item) => item.id === account)) {
+                        throw new AppError("shared_account_missing");
+                    }
+                    // Verify read access before starting the authorization runner.
                     await member.github.secretPublicKey(member.repository.name, signal);
-                    if ((await member.github.activeSessions(member.repository.name, member.user, signal)).length > 0) {
+                    if (
+                        (await member.github.activeSessions(member.repository.name, member.user, signal)).some(
+                            (run) => run.id !== ending,
+                        )
+                    ) {
                         throw new AppError("session_busy");
                     }
-                    set({ phase: { kind: "starting" } });
+                    set({ phase: { kind: "starting" }, editor: { kind: "closed" }, account });
                     try {
                         set({
                             phase: {
                                 kind: "waiting",
-                                session: await beginSession(member, "login", signal, { loginAccess: get().method }),
+                                session: await beginSession(member, "login", signal, {
+                                    loginAccess: get().method,
+                                    account,
+                                }),
                             },
                         });
                     } catch (cause) {
-                        set({ phase });
+                        set({ phase, editor });
                         throw cause;
                     }
                 }),

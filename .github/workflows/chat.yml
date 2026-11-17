@@ -17,6 +17,11 @@ on:
         type: string
         required: true
 
+      account:
+        description: Shared Claude account identifier (legacy preserves the original secret)
+        type: string
+        default: legacy
+        required: false
       access:
         description: Interface for this session
         type: choice
@@ -113,7 +118,7 @@ jobs:
         run: node src/runner/main.ts chat
         env:
           GH_TOKEN: ${{ github.token }}
-          EZSHARE_CLAUDE_TOKEN: ${{ secrets.EZSHARE_CLAUDE_TOKEN }}
+          EZSHARE_CLAUDE_TOKEN: ${{ (inputs.account == '' || inputs.account == 'legacy') && secrets.EZSHARE_CLAUDE_TOKEN || secrets[format('EZSHARE_CLAUDE_ACCOUNT_{0}', inputs.account)] }}
       - name: Save the member's encrypted history
         # Only when the session archived a history it was allowed to replace: an archive this browser could not
         # read is never overwritten unless the member chose to.
