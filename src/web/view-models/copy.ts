@@ -48,6 +48,8 @@ export function errorMessage(code: ConnectionError): string {
             return "You already have a session running in this repository. End it before starting another.";
         case "storage_unavailable":
             return "This browser blocked local storage for the launcher. Allow site data and reload.";
+        case "history_too_large":
+            return "The workspace is too large to save. The previous saved history was kept.";
         case "history_key_missing":
             return "The runner did not receive your personal history key. Keep this launcher open and start again. It did not create a new Computer or replace your saved history.";
         case "shared_account_missing":
@@ -246,7 +248,7 @@ export const chatCopy = {
     vscodeAuthorize: "Authorize VS Code",
     vscodeOpen: "Open VS Code",
     vscodeReadyHint:
-        "Use the same GitHub account you authorized. Open a new terminal to continue Claude Code. If it opens a shell, run claude --continue. End this session here to save your workspace.",
+        "Use the same GitHub account you authorized. Open the Claude Code extension and choose a conversation from its history, or use the terminal. End this session here to save your workspace.",
     open: "Open chat",
     readyHint: `Anyone with this link can use your session until it ends, so do not share it. The session ends after ${chatLifetime}, or after ${chatIdleStop} without a message. End it here when you are done, so your history is saved.`,
     end: "End session",

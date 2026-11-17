@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getByRole, getByText, queryByRole } from "@testing-library/dom";
 import { afterEach, expect, test } from "vitest";
@@ -56,10 +56,9 @@ test("Given a member authorizes VS Code, When she reloads, restarts VS Code and 
     if (home === undefined) {
         throw new Error("Expected the personal workspace");
     }
-    const settings: unknown = JSON.parse(await readFile(join(home, "workspace", ".vscode", "settings.json"), "utf8"));
-    expect(settings).toMatchObject({
-        "terminal.integrated.defaultProfile.linux": "Ezshare Claude",
-    });
+    await expect(access(join(home, "workspace", ".vscode", "settings.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(getByText(body, /Open the Claude Code extension and choose a conversation/u)).toBeTruthy();
+    await mkdir(join(home, "workspace", ".vscode"), { recursive: true });
     const memberSettings = '// My existing VS Code settings\n{"terminal.integrated.defaultProfile.linux":"bash",}\n';
     await writeFile(join(home, "workspace", ".vscode", "settings.json"), memberSettings);
     for (const entry of await app.actions.agentLog(run.id)) {
@@ -86,6 +85,15 @@ test("Given a member authorizes VS Code, When she reloads, restarts VS Code and 
     await app.eventually(() => getByRole(body, "link", { name: /Open chat/u }));
     expect(getByText(body, "Your previous conversation and workspace are restored.")).toBeTruthy();
     expect(await readFile(join(home, "workspace", "vscode-notes.txt"), "utf8")).toBe("workspace from vscode\n");
+    await expect(access(join(home, "vscode", "extensions", "installed-program-cache"))).rejects.toMatchObject({
+        code: "ENOENT",
+    });
+    await expect(
+        access(join(home, "vscode", "server", "data", "CachedExtensionVSIXs", "package.vsix")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(home, "vscode", "server", "data", "User", "settings.json"), "utf8")).toBe(
+        '{"editor.fontSize":17}',
+    );
     for (const job of app.actions.jobs.values()) {
         expect(JSON.stringify(job.diagnostics)).not.toContain("ABCD-EFGH");
         expect(JSON.stringify(job.diagnostics)).not.toContain("private-tunnel-detail");
@@ -122,4 +130,41 @@ test("Given a ready VS Code session, When the tunnel process exits unexpectedly,
     expect(JSON.stringify(job.diagnostics)).not.toContain("private-tunnel-detail");
     expect(run.conclusion).toBe("failure");
     expect([...app.actions.cache.keys()]).toContain(`ezshare-history-101-run-${run.id}`);
+});
+
+test("Given the earlier generated Claude terminal profile, When a member opens VS Code, Then only that profile is removed and personal editor settings stay", async () => {
+    app = await createTestApp();
+    const body = document.body;
+    await connect(app, tokens.alice);
+    await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Start a session" })));
+    await app.eventually(() => getByRole(body, "link", { name: /Open chat/u }));
+    const run = app.github.runs[0];
+    const home = run === undefined ? undefined : app.actions.jobs.get(run.id)?.agentHome;
+    if (home === undefined) {
+        throw new Error("Expected the member workspace");
+    }
+    await mkdir(join(home, "workspace", ".vscode"), { recursive: true });
+    await writeFile(
+        join(home, "workspace", ".vscode", "settings.json"),
+        JSON.stringify({
+            "editor.fontSize": 17,
+            "terminal.integrated.profiles.linux": {
+                "Ezshare Claude": { path: "/opt/ezshare-tools/node_modules/.bin/claude", args: ["--continue"] },
+                Bash: { path: "/bin/bash" },
+            },
+            "terminal.integrated.defaultProfile.linux": "Ezshare Claude",
+        }),
+    );
+    await app.user.click(getByRole(body, "button", { name: "End session" }));
+    await app.eventually(() => getByRole(body, "button", { name: "Start a session" }));
+    await app.user.selectOptions(getByRole(body, "combobox", { name: "Open with" }), "vscode");
+    await app.user.click(getByRole(body, "button", { name: "Start a session" }));
+    await app.eventually(() => getByText(body, "ABCD-EFGH"));
+    const settings: unknown = JSON.parse(await readFile(join(home, "workspace", ".vscode", "settings.json"), "utf8"));
+    expect(settings).toEqual({
+        "editor.fontSize": 17,
+        "terminal.integrated.profiles.linux": { Bash: { path: "/bin/bash" } },
+    });
+    await app.user.click(getByRole(body, "button", { name: "Cancel" }));
+    await app.eventually(() => getByRole(body, "button", { name: "Start a session" }));
 });
