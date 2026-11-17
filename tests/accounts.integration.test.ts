@@ -48,6 +48,8 @@ test("Given an owner with no shared account, When she adds two accounts, refresh
     await app.user.click(getByRole(body, "button", { name: "Remove account" }));
     await app.eventually(() => expect(queryByRole(body, "group", { name: "Design team" })).toBeNull());
     await app.user.click(getByRole(body, "button", { name: "Use a shared account" }));
+    const remaining = await app.eventually(() => getByRole(body, "combobox", { name: "Claude account" }));
+    await app.user.selectOptions(remaining, within(remaining).getByRole("option", { name: "Engineering" }));
     await app.user.click(await app.eventually(() => getByRole(body, "button", { name: "Start a session" })));
     await app.eventually(() => getByRole(body, "link", { name: /Open chat/u }));
     expect(app.github.runs.at(-1)?.inputs["account"]).not.toBe("legacy");
