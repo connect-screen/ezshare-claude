@@ -6,6 +6,7 @@ import type { GitHubClient, GitHubUser, Repository, WorkflowRun } from "../../sh
 import {
     ISSUE_BODY,
     issueTitle,
+    type LoginAccess,
     lifetime,
     type Purpose,
     publishedRunnerKey,
@@ -34,7 +35,11 @@ export async function beginSession(
     member: MemberContext,
     purpose: Purpose,
     signal: AbortSignal,
-    options: { readonly newMortyIdentity?: boolean; readonly access?: SessionAccess } = {},
+    options: {
+        readonly newMortyIdentity?: boolean;
+        readonly access?: SessionAccess;
+        readonly loginAccess?: LoginAccess;
+    } = {},
 ): Promise<PendingSession> {
     const key = await createChannelKey();
     const requestId = crypto.randomUUID();
@@ -63,6 +68,7 @@ export async function beginSession(
                 issue: String(issue),
                 client_key: key.publicKey,
                 ...(purpose === "chat" && options.access === "vscode" ? { access: "vscode" as const } : {}),
+                ...(purpose === "login" && options.loginAccess === "vscode" ? { login_access: "vscode" as const } : {}),
                 ...(purpose === "chat" && options.newMortyIdentity === true
                     ? { reset_morty_identity: "true" as const }
                     : {}),

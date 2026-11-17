@@ -3,6 +3,8 @@ import { AppError } from "./errors.ts";
 
 /** A session is one workflow run that serves exactly one purpose for one member. */
 export type Purpose = "chat" | "login";
+export const loginAccessSchema = v.picklist(["browser", "vscode"]);
+export type LoginAccess = v.InferOutput<typeof loginAccessSchema>;
 const sessionAccessSchema = v.picklist(["morty", "vscode"]);
 export type SessionAccess = v.InferOutput<typeof sessionAccessSchema>;
 
@@ -41,6 +43,7 @@ export const dispatchInputsSchema = v.object({
     issue: v.pipe(v.string(), v.regex(/^[1-9][0-9]{0,15}$/u)),
     client_key: channelKeySchema,
     access: v.optional(sessionAccessSchema),
+    login_access: v.optional(loginAccessSchema),
     reset_morty_identity: v.optional(v.picklist(["true", "false"])),
 });
 export type DispatchInputs = Readonly<v.InferOutput<typeof dispatchInputsSchema>>;
@@ -124,6 +127,7 @@ export const envelopeSchema = v.strictObject({
         "ready",
         "vscode_challenge",
         "vscode_ready",
+        "vscode_login_ready",
         "stop",
         "stopped",
         "failed",
@@ -217,6 +221,17 @@ export const chatBrowserMessageSchema = v.variant("kind", [
 ]);
 export const loginRunnerMessageSchema = v.variant("kind", [
     v.strictObject({
+        kind: v.literal("vscode_challenge"),
+        body: v.strictObject({ code: vscodeDeviceCodeSchema }),
+    }),
+    v.strictObject({
+        kind: v.literal("vscode_login_ready"),
+        body: v.strictObject({
+            url: v.pipe(v.string(), v.maxLength(8192)),
+            authorizationUrl: v.pipe(v.string(), v.maxLength(8192)),
+        }),
+    }),
+    v.strictObject({
         kind: v.literal("challenge"),
         body: v.strictObject({ url: v.pipe(v.string(), v.maxLength(8192)) }),
     }),
@@ -269,13 +284,15 @@ export function mortyUrl(value: string): string {
     return url.href;
 }
 
-export const VSCODE_DESKTOP_WORKSPACE = "ezshare.code-workspace";
+export function vscodeWorkspace(purpose: Purpose): string {
+    return purpose === "login" ? "ezshare-login.code-workspace" : "ezshare.code-workspace";
+}
 
 /** Opens the generated workspace beside the remote folder, without another machine or folder picker. */
-export function vscodeDesktopUrl(value: string): string {
+export function vscodeDesktopUrl(value: string, purpose: Purpose = "chat"): string {
     const url = new URL(vscodeUrl(value));
     const remoteHome = url.pathname.slice("/tunnel/".length, url.pathname.lastIndexOf("/"));
-    return `vscode://vscode-remote/tunnel+${remoteHome}/${VSCODE_DESKTOP_WORKSPACE}`;
+    return `vscode://vscode-remote/tunnel+${remoteHome}/${vscodeWorkspace(purpose)}`;
 }
 
 export function vscodeUrl(value: string): string {

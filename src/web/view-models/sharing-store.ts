@@ -4,11 +4,15 @@ import { AppError, type ErrorCode } from "../../shared/errors.ts";
 import {
     authorizationCodeSchema,
     authorizationUrl,
+    type LoginAccess,
     type LoginBrowserMessage,
     type LoginRunnerMessage,
+    loginAccessSchema,
     loginBrowserMessageSchema,
     loginRunnerMessageSchema,
     SHARED_SECRET_NAME,
+    vscodeDesktopUrl,
+    vscodeUrl,
 } from "../../shared/protocol.ts";
 import { sealForGitHub } from "../services/secret-box.ts";
 import type { PendingSession } from "../services/vault.ts";
@@ -30,12 +34,17 @@ export type SharingOutcome =
     | { readonly kind: "cancelled" }
     | { readonly kind: "failed"; readonly code: ErrorCode };
 
+type AuthorizationEntry =
+    | { readonly kind: "browser"; readonly url: string }
+    | { readonly kind: "vscode"; readonly url: string; readonly desktopUrl: string };
+
 export type SharingPhase =
     | { readonly kind: "loading" }
     | { readonly kind: "intro"; readonly outcome: SharingOutcome | null }
     | { readonly kind: "starting" }
     | { readonly kind: "waiting"; readonly session: PendingSession }
-    | { readonly kind: "authorizing"; readonly session: PendingSession; readonly url: string }
+    | { readonly kind: "connecting_vscode"; readonly session: PendingSession; readonly code: string }
+    | { readonly kind: "authorizing"; readonly session: PendingSession; readonly entry: AuthorizationEntry }
     | { readonly kind: "completing"; readonly session: PendingSession }
     | { readonly kind: "publishing"; readonly session: PendingSession };
 
@@ -46,6 +55,7 @@ export interface SharingState {
     readonly command: SharingCommand;
     readonly problem: ErrorCode | null;
     readonly commandError: ErrorCode | null;
+    readonly method: LoginAccess;
 }
 
 export interface SharingActions {
@@ -53,6 +63,7 @@ export interface SharingActions {
     readonly close: () => void;
     /** Starts authorization; the owner has acknowledged what sharing gives every member. */
     readonly start: () => void;
+    readonly selectMethod: (method: string) => void;
     readonly submitCode: (code: string) => void;
     readonly cancel: () => void;
 }
@@ -105,10 +116,30 @@ export function createSharingStore(member: MemberContext) {
             if (current.kind === "completing") {
                 return current;
             }
+            const desktop = messages.find((message) => message.kind === "vscode_login_ready");
+            if (desktop !== undefined) {
+                return {
+                    kind: "authorizing",
+                    session,
+                    entry: {
+                        kind: "vscode",
+                        url: authorizationUrl(desktop.body.authorizationUrl),
+                        desktopUrl: vscodeDesktopUrl(vscodeUrl(desktop.body.url), "login"),
+                    },
+                };
+            }
             const challenge = messages.find((message) => message.kind === "challenge");
-            return challenge === undefined
+            if (challenge !== undefined) {
+                return {
+                    kind: "authorizing",
+                    session,
+                    entry: { kind: "browser", url: authorizationUrl(challenge.body.url) },
+                };
+            }
+            const connection = messages.findLast((message) => message.kind === "vscode_challenge");
+            return connection === undefined
                 ? { kind: "waiting", session }
-                : { kind: "authorizing", session, url: authorizationUrl(challenge.body.url) };
+                : { kind: "connecting_vscode", session, code: connection.body.code };
         };
 
         const synchronize = async (signal: AbortSignal): Promise<void> => {
@@ -129,6 +160,7 @@ export function createSharingStore(member: MemberContext) {
                 case "starting":
                     return;
                 case "waiting":
+                case "connecting_vscode":
                 case "authorizing":
                 case "completing":
                 case "publishing":
@@ -157,6 +189,12 @@ export function createSharingStore(member: MemberContext) {
             command: null,
             problem: null,
             commandError: null,
+            method: "browser",
+            selectMethod: (method) => {
+                if (get().phase.kind === "intro" && get().command === null && v.is(loginAccessSchema, method)) {
+                    set({ method });
+                }
+            },
             open: workflow.open,
             close: workflow.close,
             start: () =>
@@ -172,7 +210,12 @@ export function createSharingStore(member: MemberContext) {
                     }
                     set({ phase: { kind: "starting" } });
                     try {
-                        set({ phase: { kind: "waiting", session: await beginSession(member, "login", signal) } });
+                        set({
+                            phase: {
+                                kind: "waiting",
+                                session: await beginSession(member, "login", signal, { loginAccess: get().method }),
+                            },
+                        });
                     } catch (cause) {
                         set({ phase });
                         throw cause;
@@ -199,7 +242,12 @@ export function createSharingStore(member: MemberContext) {
             cancel: () =>
                 command("cancel", async (signal) => {
                     const phase = get().phase;
-                    if (phase.kind !== "waiting" && phase.kind !== "authorizing" && phase.kind !== "completing") {
+                    if (
+                        phase.kind !== "waiting" &&
+                        phase.kind !== "connecting_vscode" &&
+                        phase.kind !== "authorizing" &&
+                        phase.kind !== "completing"
+                    ) {
                         return;
                     }
                     const observation = await observeSession(member, phase.session, schemas, signal);

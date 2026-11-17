@@ -302,6 +302,25 @@ export function chatOutcomeText(outcome: ChatOutcome): string {
 
 export const sharingCopy = {
     title: "Share your Claude account",
+    method: "Authorize Claude using",
+    browserMethod: "This browser",
+    runnerMethod: "Runner · Desktop VS Code",
+    runnerMethodHint:
+        "Use the runner's IP for Claude sign-in. Requires desktop VS Code. This temporary workspace does not load or save your conversations.",
+    vscodeConnectTitle: "Connect the authorization workspace",
+    vscodeConnectHint:
+        "Approve Visual Studio Code on GitHub, then sign into desktop VS Code with that same GitHub account. Claude authorization comes next.",
+    vscodeConnect: "Authorize VS Code",
+    vscodeOpen: "Open authorization workspace in VS Code",
+    vscodeWaiting: "Waiting for GitHub authorization. This page updates automatically.",
+    runnerBrowserHint:
+        "In that VS Code window, choose View → Browser. Confirm its address bar shows a connection through the runner, then paste the link below into that Integrated Browser and sign into Claude. Opening it in Chrome uses your local network.",
+    runnerReturnCode: "After approving Claude, copy the authorization code back here.",
+    authorizationLink: "Claude authorization link",
+    copyAuthorization: "Copy authorization link",
+    authorizationCopied: "Copied. Paste it into the Integrated Browser in your remote VS Code window.",
+    authorizationManualCopy:
+        "Clipboard access was blocked. The link is selected; copy it and paste it into Integrated Browser.",
     progress: "Sharing progress",
     steps: ["Start", "Authorize on claude.ai", "Store for the team"],
     loading: "Checking for an authorization in progress…",
