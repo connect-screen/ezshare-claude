@@ -3,6 +3,8 @@ import { AppError } from "./errors.ts";
 
 /** A session is one workflow run that serves exactly one purpose for one member. */
 export type Purpose = "chat" | "login";
+export const sessionAccessSchema = v.picklist(["morty", "vscode"]);
+export type SessionAccess = v.InferOutput<typeof sessionAccessSchema>;
 
 const CHAT_LIFETIME_MS = 4 * 60 * 60_000;
 const LOGIN_LIFETIME_MS = 15 * 60_000;
@@ -38,6 +40,7 @@ export const dispatchInputsSchema = v.object({
     request_id: requestIdSchema,
     issue: v.pipe(v.string(), v.regex(/^[1-9][0-9]{0,15}$/u)),
     client_key: channelKeySchema,
+    access: v.optional(sessionAccessSchema),
     reset_morty_identity: v.optional(v.picklist(["true", "false"])),
 });
 export type DispatchInputs = Readonly<v.InferOutput<typeof dispatchInputsSchema>>;
@@ -113,7 +116,18 @@ export const envelopeSchema = v.strictObject({
     runId: runIdSchema,
     sender: v.picklist(["browser", "runner"]),
     sequence: sequenceSchema,
-    kind: v.picklist(["challenge", "code", "token", "history", "ready", "stop", "stopped", "failed"]),
+    kind: v.picklist([
+        "challenge",
+        "code",
+        "token",
+        "history",
+        "ready",
+        "vscode_challenge",
+        "vscode_ready",
+        "stop",
+        "stopped",
+        "failed",
+    ]),
     nonce: v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{16}$/u)),
     data: sealedTextSchema,
 });
@@ -143,6 +157,7 @@ export const runnerFailureSchema = v.strictObject({
         "history_key_missing",
         "agent_failed",
         "morty_unavailable",
+        "vscode_unavailable",
         "provider_failed",
         "github_unavailable",
         "rate_limited",
@@ -171,7 +186,17 @@ export const historyModeSchema = v.picklist(["continue", "replace"]);
 export type HistoryMode = v.InferOutput<typeof historyModeSchema>;
 
 /** Messages per channel direction. Any other kind on a channel is a protocol violation. */
+export const vscodeDeviceCodeSchema = v.pipe(v.string(), v.regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/u));
+
 export const chatRunnerMessageSchema = v.variant("kind", [
+    v.strictObject({
+        kind: v.literal("vscode_challenge"),
+        body: v.strictObject({ code: vscodeDeviceCodeSchema }),
+    }),
+    v.strictObject({
+        kind: v.literal("vscode_ready"),
+        body: v.strictObject({ url: v.pipe(v.string(), v.maxLength(8192)), history: historyStartSchema }),
+    }),
     v.strictObject({
         kind: v.literal("ready"),
         body: v.strictObject({
@@ -238,6 +263,21 @@ export function mortyUrl(value: string): string {
         code.length > 4096 ||
         url.searchParams.get("harness") !== "claude" ||
         !v.is(requestIdSchema, url.searchParams.get("sessionId"))
+    ) {
+        throw new AppError("invalid_response");
+    }
+    return url.href;
+}
+
+export function vscodeUrl(value: string): string {
+    const url = parseUrl(value);
+    if (
+        url.origin !== "https://vscode.dev" ||
+        !/^\/tunnel\/ez-[a-f0-9]{16}\//u.test(url.pathname) ||
+        url.username !== "" ||
+        url.password !== "" ||
+        url.search !== "" ||
+        url.hash !== ""
     ) {
         throw new AppError("invalid_response");
     }

@@ -28,9 +28,11 @@ export type ErrorCode =
     | "session_busy"
     | "storage_unavailable"
     | "history_key_missing"
+    | "history_too_large"
     | "shared_account_missing"
     | "agent_failed"
     | "morty_unavailable"
+    | "vscode_unavailable"
     | "provider_failed"
     | "expired"
     | "unexpected";

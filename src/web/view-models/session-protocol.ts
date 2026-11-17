@@ -3,7 +3,14 @@ import { type MessageSchema, SessionChannel } from "../../shared/channel.ts";
 import { createChannelKey, deriveChannelKeys } from "../../shared/channel-crypto.ts";
 import { AppError, isAccessDenied, toAppError } from "../../shared/errors.ts";
 import type { GitHubClient, GitHubUser, Repository, WorkflowRun } from "../../shared/github/client.ts";
-import { ISSUE_BODY, issueTitle, lifetime, type Purpose, publishedRunnerKey } from "../../shared/protocol.ts";
+import {
+    ISSUE_BODY,
+    issueTitle,
+    lifetime,
+    type Purpose,
+    publishedRunnerKey,
+    type SessionAccess,
+} from "../../shared/protocol.ts";
 import { findSessionRun } from "../../shared/session-run.ts";
 import type { PendingSession, Vault } from "../services/vault.ts";
 
@@ -27,7 +34,7 @@ export async function beginSession(
     member: MemberContext,
     purpose: Purpose,
     signal: AbortSignal,
-    options: { readonly newMortyIdentity?: boolean } = {},
+    options: { readonly newMortyIdentity?: boolean; readonly access?: SessionAccess } = {},
 ): Promise<PendingSession> {
     const key = await createChannelKey();
     const requestId = crypto.randomUUID();
@@ -55,6 +62,7 @@ export async function beginSession(
                 request_id: requestId,
                 issue: String(issue),
                 client_key: key.publicKey,
+                ...(purpose === "chat" && options.access === "vscode" ? { access: "vscode" as const } : {}),
                 ...(purpose === "chat" && options.newMortyIdentity === true
                     ? { reset_morty_identity: "true" as const }
                     : {}),

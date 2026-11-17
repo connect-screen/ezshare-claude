@@ -35,6 +35,16 @@ const EXCLUDED = [
     "./.claude/.credentials.json",
     "./.cache",
     "./.npm",
+    "./vscode/cli/servers",
+    "./vscode/cli/cli",
+    "./vscode/extensions",
+    "./vscode/server/data/CachedExtensionVSIXs",
+    "./vscode/server/data/CachedData",
+    "./vscode/server/data/logs",
+    "./.vscode-server/cli/servers",
+    "./.vscode-server/bin",
+    "./vscode/cli/*.lock*",
+    "./vscode/server/logs",
     "./morty/computer/daemon.lock*",
     "./morty/*.lock.sqlite*",
     "./morty/computer/logs",
@@ -187,7 +197,7 @@ export async function saveHistory(
             transform(chunk: Buffer, _encoding, callback) {
                 bytes += chunk.length;
                 if (bytes > MAX_ARCHIVE_BYTES) {
-                    callback(new AppError("invalid_input"));
+                    callback(new AppError("history_too_large"));
                     return;
                 }
                 const head = started ? Buffer.alloc(0) : begin();
