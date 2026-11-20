@@ -8,15 +8,53 @@ metadata:
 
 # ezshare-claude
 
-Share one Claude Code account with your team while every member keeps a private session.
+Share Claude Code accounts with your team while every member keeps a private session.
 
-A member opens the launcher, connects with a fine-grained GitHub token and starts a session. GitHub Actions
-starts a fresh runner for that member, Claude Code runs there with the team's shared account, and Morty connects
-it to the member's browser. Sessions last up to four hours and end early after 15 minutes without a new Claude
-turn, which frees the runner. Normal session shutdown, including an idle stop, encrypts the member's Claude
-conversation and workspace for the next session, under a key kept only in that browser. An unreadable archive
+A member signs in to the launcher and taps **Wake Claude** on **My Claude**, their personal workspace. GitHub
+Actions starts a fresh runner for that member. Claude Code uses the team account (chosen automatically when there
+is only one), and **Open Claude** opens the workspace through Morty or VS Code. **Put to sleep** ends it early. Sessions last up to four hours and end early after 15 minutes without a new Claude
+turn, which frees the runner. The runner encrypts and uploads the member's Claude conversation and workspace
+after startup, after each five-minute interval, and during normal shutdown, including an idle stop. The key is
+kept only in that browser. An unreadable archive
 is not overwritten unless the member chooses to replace it; clearing browser data loses its key. An account
-owner shares their Claude account once, from the same launcher.
+owner adds or reauthorizes shared Claude accounts from **Team accounts** in the launcher's account menu.
+
+Morty normally reuses the archived Computer identity. If setup reports exactly `computer_revoked`, the runner
+clears only its dedicated Morty directory and retries once with a new identity, retaining the Claude session
+and workspace. The previous Computer's links no longer work. Other authorization or pairing failures are not
+treated as permission to replace an identity. Actions logs record the allowlisted recovery reason and stage;
+local acceptance tests cover history continuation and the single-recovery limit.
+
+## Automatic history saves
+
+A ready Morty or VS Code session uploads encrypted snapshots independently of launcher polling. Saves are serial:
+a failed upload leaves the last completed remote snapshot available and the next interval retries. Only the
+latest two snapshots from the current run are retained; a previous snapshot is removed only after its successor
+uploads successfully. The normal final cache entry remains compatible with older launchers and workflows.
+
+On normal shutdown, the runner cancels and joins any active snapshot, stops the agent, encrypts its final state
+and waits for that upload before reporting that history is saved. The workflow's final cache action is a fallback
+if the controller upload fails. A force-cancelled or lost runner can recover only up to its last successful
+upload; changes after that snapshot may be lost. GitHub cache retention and availability still apply. Running
+files can change during a snapshot, so this is best-effort recovery, not a filesystem transaction.
+
+The archive encryption, repository/member binding and browser history key are unchanged. A browser that cannot
+open the restored archive does not create checkpoints or replace it unless the member explicitly chooses to.
+Existing runners do not gain this behavior until the member starts a new session.
+
+| State or file | Writer | Reader |
+| --- | --- | --- |
+| Runner `ezshare-history/history.bin.partial` | Trusted controller streaming the agent's tar output through AES-GCM | Controller only; removed on failure or cancellation |
+| Runner `ezshare-history/history.bin` | Controller replaces it atomically after encryption completes | Bounded cache upload worker; final workflow cache action |
+| GitHub cache `ezshare-history-<user-id>-run-<run-id>-checkpoint-<uuid>` | Trusted controller through the Actions cache runtime | Next run's cache restore; contents open only with that member's browser key |
+| `ACTIONS_RUNTIME_TOKEN` and cache service endpoints | GitHub's JavaScript action runtime | Trusted controller and bounded cache worker; never the unprivileged agent |
+| Public `history.checkpoint` and `history.cache_failed` diagnostics | Controller after a save, failure, or cleanup failure | Run logs; only sequence, outcome, exit status and allowlisted error codes |
+
+Snapshot scheduling, upload failures, retention and crash recovery are covered by controlled-clock application
+scenarios with real archive encryption and a stateful Actions simulator. The manual **History checkpoint cache
+probe** uses synthetic bytes and an isolated cache version to check the real upload/restore/delete transport;
+it does not read shared Claude credentials or personal history. The real upload, byte-for-byte restore and
+scoped cleanup passed in [Actions run 44114504713](https://github.com/portalcrew/ezshare-claude/actions/runs/44114504713).
 
 ## How it stays private
 
@@ -35,7 +73,47 @@ What it does not protect against is described in [SECURITY.md](SECURITY.md); rea
 
 Members of an existing team use that team's launcher and execution repository; they do not each fork it.
 An independent user or team forks this repository and deploys their own launcher and Actions workflows.
-Forks do not inherit the shared Claude credential: an account owner must share one in the new repository.
+Forks do not inherit shared Claude credentials: an account owner must add accounts in the new repository.
+
+## Shared accounts
+
+**Team accounts** (in the account menu) lists stored accounts and their last credential update time. A stored credential does
+not prove Claude still accepts it; Claude checks authorization when a session starts. An empty repository shows
+**No accounts shared yet**. A permissions or network error is shown separately and is never treated as an empty
+inventory.
+
+- **Add account** creates an independent credential without replacing existing accounts. A label is normalized
+  and limited to 36 UTF-8 bytes to fit GitHub's Secret name limit. Labels are supplied by the owner, not verified
+  Claude account identities.
+- **Reauthorize** replaces only the selected account's credential and keeps its identifier.
+- **Remove** asks for confirmation and removes that repository Secret. Existing sessions and copied credentials
+  may continue to work; revoke the token in Claude account settings to invalidate those copies. Removing an
+  account never deletes members' conversation history.
+
+The original `EZSHARE_CLAUDE_TOKEN` appears as **Team account** automatically; no migration or new
+Claude login is required to keep using it. On **My Claude**, a single available account is selected without
+showing a picker. With multiple accounts, the member explicitly chooses one before waking Claude. An account removed after
+selection is not silently replaced by another. Account and interface changes keep the same personal history key
+for that GitHub repository and numeric user ID.
+
+### Credential and selection state
+
+| State | Writer | Reader |
+| --- | --- | --- |
+| Original repository Secret `EZSHARE_CLAUDE_TOKEN` | Owner browser through the sealed Secrets API | GitHub's workflow caller, then the selected worker |
+| Named repository Secrets `EZSHARE_CLAUDE_ACCOUNT_<id>` | Owner browser through the sealed Secrets API | GitHub's workflow caller, then the selected worker |
+| Secret names and update times | GitHub when a credential is stored or changed | Members with Secrets read; API responses never include credential values |
+| Current page session request (memory only) | Launcher before dispatch; released when the task ends or the page closes | Launcher while polling the task, displaying its account, or storing the returned authorization in that account's Secret |
+| Runner `EZSHARE_CLAUDE_TOKEN` environment value | GitHub injects the one explicitly forwarded `claude_token` secret | Trusted session controller; only the selected Claude credential is passed to the unprivileged agent |
+
+Account identifiers contain a reversible Base32 label and a random suffix. Labels are metadata, not encrypted
+identity claims. The dispatch workflow allocates no runner and forwards one named credential to the reusable
+worker; it does not inherit the repository's Secrets context. The selected account and channel key stay on the
+current page's task object. There are no browser `account:` or `pending:` writes, versioned pending-record
+readers, or task restoration after a page reload. Keep the launcher open through authorization and while Claude
+is awake. Switching between launcher tabs preserves the current task. A new page can see and end a
+blocking run but cannot recover its private entry. Existing transient records are ignored. The encrypted
+GitHub connection, personal history key, interface preference, and saved history archive formats are unchanged.
 
 ## Setting up your fork
 
@@ -49,14 +127,16 @@ Forks do not inherit the shared Claude credential: an account owner must share o
 3. For production, configure a dedicated hostname in **Settings → Pages → Custom domain**, and make its DNS-only
    CNAME point to `<fork-owner>.github.io` without a repository path. Wait for the Pages certificate and enable
    **Enforce HTTPS**. The domain is configured once in Pages, not duplicated in an environment variable.
-   The current upstream deployment is https://ezshare-claude.connect-screen.com; forks do not inherit that domain.
+   The upstream launcher is available at https://ezshare-claude.morty.build/. Each fork configures its own domain.
 4. Treat the whole browser origin as trusted. Paths under one `<owner>.github.io` share browser storage and
    encryption keys with every other Pages site on that host. A repository path is not an isolation boundary.
    Only connect with a real token when all sites on that host are trusted, or use a dedicated custom hostname.
    Changing the hostname later changes the origin and does not migrate browser history keys automatically.
-5. The account owner opens **Share your account** in the fork's launcher. A member's fine-grained token selects
-   only the fork and needs Actions/Issues read and write; the owner's token additionally needs Secrets read and
-   write. Organization policies may require approval. This launcher accepts fine-grained tokens only; GitHub's
+5. The account owner opens **Team accounts → Add account** from the fork's launcher account menu, gives it a short
+   team-visible label and completes Claude authorization. The owner can use the current browser or the runner
+   through desktop VS Code's Integrated Browser. A member's fine-grained token selects only the fork and needs
+   Actions/Issues read and write plus Secrets read to list account metadata. Adding, reauthorizing or removing an
+   account requires Secrets read and write. Organization policies may require approval. This launcher accepts fine-grained tokens only; GitHub's
    repository/outside-collaborator limitations make an organization with internal members the supported team setup.
    See [GitHub's token limitations](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#fine-grained-personal-access-tokens-limitations).
 

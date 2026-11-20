@@ -4,8 +4,7 @@ import { Button, focusRing } from "./ui/button.tsx";
 import { ExternalLink } from "./ui/external-link.tsx";
 import { cn } from "./utils/cn.ts";
 
-const field =
-    "mt-1 block min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm dark:border-stone-600 dark:bg-stone-950";
+const field = "mt-1 block min-h-11 w-full rounded-[14px] border border-hairline bg-white px-3 text-sm";
 
 /** The three connection steps. The repository field is local state so the token links follow it as typed. */
 export function ConnectionForm({
@@ -35,10 +34,11 @@ export function ConnectionForm({
         onConnect({ repository, token: value });
     };
     return (
-        <form onSubmit={submit}>
-            <ol className="space-y-6">
+        <form onSubmit={submit} aria-label={copy.title} className="rounded-[24px] bg-white p-6 shadow-module sm:p-7">
+            <h2 className="mb-5 text-[22px] leading-[30px] font-semibold tracking-[-0.01em]">{copy.title}</h2>
+            <ol className="space-y-7">
                 <Step number={1} label={copy.stepLabel(1)} title={copy.repositoryStep}>
-                    <label className="block text-sm font-semibold">
+                    <label className="block text-sm font-medium">
                         {copy.repositoryLabel}
                         <input
                             name="repository"
@@ -66,26 +66,26 @@ export function ConnectionForm({
                                 <strong>{templates.name}</strong>
                                 {copy.templates.afterName}
                             </p>
-                            <div className="space-y-4">
-                                <div className="space-y-1">
-                                    <ExternalLink href={templates.member} prominent>
+                            <div className="grid gap-3">
+                                <div className="space-y-2 rounded-[18px] bg-canvas p-4 [&>a]:w-full [&>a]:px-4 [&>a]:text-[13px]">
+                                    <ExternalLink href={templates.member} outlined>
                                         {copy.memberLink}
                                     </ExternalLink>
-                                    <p className="text-sm text-stone-600 dark:text-stone-400">{copy.memberHint}</p>
+                                    <p className="text-sm text-ink-3">{copy.memberHint}</p>
                                 </div>
-                                <div className="space-y-1">
-                                    <ExternalLink href={templates.ownerSharing} prominent>
+                                <div className="space-y-2 rounded-[18px] bg-canvas p-4 [&>a]:w-full [&>a]:px-4 [&>a]:text-[13px]">
+                                    <ExternalLink href={templates.ownerSharing} outlined>
                                         {copy.ownerLink}
                                     </ExternalLink>
-                                    <p className="text-sm text-stone-600 dark:text-stone-400">{copy.ownerHint}</p>
+                                    <p className="text-sm text-ink-3">{copy.ownerHint}</p>
                                 </div>
                             </div>
-                            <p className="text-sm text-stone-600 dark:text-stone-400">{copy.approvalHint}</p>
+                            <p className="text-sm text-ink-3">{copy.approvalHint}</p>
                         </>
                     )}
                 </Step>
                 <Step number={3} label={copy.stepLabel(3)} title={copy.connectStep}>
-                    <label className="block text-sm font-semibold">
+                    <label className="block text-sm font-medium">
                         {copy.tokenLabel}
                         <input
                             ref={token}
@@ -98,15 +98,62 @@ export function ConnectionForm({
                             className={cn(field, "font-mono", focusRing)}
                         />
                     </label>
-                    <p id={tokenHint} className="text-sm text-stone-600 dark:text-stone-400">
+                    <p id={tokenHint} className="text-sm text-ink-3">
                         {copy.tokenHint}
                     </p>
-                    <Button type="submit" busy={busy}>
+                    <Button type="submit" busy={busy} className="min-h-12 w-full text-[15px]">
                         {copy.connect}
                     </Button>
                 </Step>
             </ol>
         </form>
+    );
+}
+
+/** Keep the alternate method visible without showing the full token setup until it is selected. */
+export function ConnectionChoices({
+    repository,
+    authorize,
+    manual,
+    back,
+    hint,
+    onAuthorize,
+    intro,
+    children,
+}: {
+    readonly repository: string;
+    readonly authorize: string;
+    readonly manual: string;
+    readonly back: string;
+    readonly hint: string;
+    readonly onAuthorize: () => void;
+    /** Shown above the choice only; the token form needs the room. */
+    readonly intro: ReactNode;
+    readonly children: ReactNode;
+}) {
+    const [usingToken, setUsingToken] = useState(false);
+    return usingToken ? (
+        <div className="space-y-4">
+            <Button variant="quiet" className="no-underline" onClick={() => setUsingToken(false)}>
+                <span aria-hidden="true">‹</span>
+                {back}
+            </Button>
+            {children}
+        </div>
+    ) : (
+        <div className="space-y-4">
+            {intro}
+            <Button onClick={onAuthorize} className="min-h-12 w-full text-[15px]">
+                {authorize}
+            </Button>
+            <p className="text-center text-sm text-ink-3">{hint}</p>
+            <div className="text-center">
+                <Button variant="quiet" onClick={() => setUsingToken(true)}>
+                    {manual}
+                </Button>
+            </div>
+            <p className="text-center text-xs text-ink-3">{repository}</p>
+        </div>
     );
 }
 
@@ -126,12 +173,12 @@ function Step({
         <li className="grid grid-cols-[2rem_1fr] gap-x-3">
             <span
                 aria-hidden="true"
-                className="flex size-8 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100"
+                className="flex size-8 items-center justify-center rounded-full bg-fill text-sm font-semibold text-ink-2"
             >
                 {number}
             </span>
             <div className="space-y-3">
-                <h3 className="pt-1 font-semibold">
+                <h3 className="pt-1 font-medium">
                     <span className="sr-only">{label}</span>
                     {title}
                 </h3>
